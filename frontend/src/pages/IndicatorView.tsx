@@ -8,6 +8,17 @@ import {
   type CohorteTitulacion,
 } from "../services/evidencias";
 import {
+  obtenerAsignaturas,
+  obtenerEvidenciaAsignatura,
+  obtenerPeriodos,
+  obtenerResultadoAsignatura,
+  subirEvidenciaAsignatura,
+  type AsignaturaReal,
+  type EvidenciaAsignaturaItem,
+  type ResultadoAsignatura,
+  type TipoEvidenciaAsignatura,
+} from "../services/seguimientoSyllabus";
+import {
   AlertCircle,
   ArrowLeft,
   BarChart2,
@@ -17,6 +28,7 @@ import {
   FolderOpen,
   TableProperties,
   CheckCircle2,
+  Loader2,
   Upload,
 } from "lucide-react";
 
@@ -38,8 +50,6 @@ import {
 } from "../utils/evaluation";
 
 import {
-  ASIGNATURAS_BY_PAO,
-  EF_DEFS,
   I3_EF_DEFS,
   I3_MATERIAS_BY_PAO,
   i3MateriaScore,
@@ -131,25 +141,138 @@ export default function IndicatorView({ indicator, onBack, career, cohort, pao, 
   );
 }
 
+// Metadatos de presentación de cada EF (label/color) -- los VALORES ya no
+// salen de acá, salen de la API real (obtenerResultadoAsignatura).
+const EF_META = [
+  { id: "EF1", key: "ef1" as const, label: "Seguimiento contenidos", color: "#2563EB" },
+  { id: "EF2", key: "ef2" as const, label: "Mejora micro currículo", color: "#16A34A" },
+  { id: "EF3", key: "ef3" as const, label: "Proceso difundido", color: "#0891B2" },
+  { id: "EF4", key: "ef4" as const, label: "Percepción estudiantil", color: "#D97706" },
+  { id: "EF5", key: "ef5" as const, label: "Marco normativo", color: "#7C3AED" },
+];
+
+const TIPOS_EVIDENCIA_ASIGNATURA: { tipo: TipoEvidenciaAsignatura; label: string }[] = [
+  { tipo: "syllabus", label: "Syllabus" },
+  { tipo: "acta_ajuste_curricular", label: "Acta de Ajuste Curricular (EF2)" },
+  { tipo: "evidencia_difusion", label: "Evidencia de Difusión (EF3)" },
+  { tipo: "acta_retroalimentacion", label: "Acta de Retroalimentación" },
+];
+
 // ── Tab Resultados (I2 – Seguimiento de Syllabus) ──────────────────────────
 function TabResults({ ind, career, cohort, pao }: { ind: IndicatorDef; career: Career | null; cohort: string; pao: number }) {
+  const [cargando, setCargando] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [idEvaluacion, setIdEvaluacion] = useState<number | null>(null);
+  const [asignaturas, setAsignaturas] = useState<AsignaturaReal[]>([]);
   const [selectedAsig, setSelectedAsig] = useState(0);
-  const paoKey = `PAO ${pao}`;
-  const asignaturas = ASIGNATURAS_BY_PAO[paoKey] ?? [];
-  const asig = asignaturas[Math.min(selectedAsig, asignaturas.length - 1)] ?? asignaturas[0];
+  const [resultado, setResultado] = useState<ResultadoAsignatura | null>(null);
+  const [cargandoResultado, setCargandoResultado] = useState(false);
+  const [evidencias, setEvidencias] = useState<EvidenciaAsignaturaItem[]>([]);
+  const [subiendoTipo, setSubiendoTipo] = useState<TipoEvidenciaAsignatura | null>(null);
 
-  const efScores = EF_DEFS.map((ef, i) => ({
+  const asig = asignaturas[Math.min(selectedAsig, asignaturas.length - 1)];
+
+  // 1) Resuelve evaluación (id_evaluacion, id_cohorte) y el PAO real, luego carga asignaturas.
+  useEffect(() => {
+    if (!career) return;
+    let cancelado = false;
+    setCargando(true);
+    setError(null);
+
+    (async () => {
+      try {
+        const evaluacion = await obtenerEvaluacion(career.code, cohort);
+        const periodos = await obtenerPeriodos(evaluacion.id_cohorte);
+        const periodo = periodos.find((p) => p.orden === pao);
+        if (!periodo) {
+          throw new Error(`No existe el PAO ${pao} para esta cohorte.`);
+        }
+        const lista = await obtenerAsignaturas(periodo.id_periodoacademico);
+        if (cancelado) return;
+        setIdEvaluacion(evaluacion.id_evaluacion);
+        setAsignaturas(lista);
+        setSelectedAsig(0);
+      } catch (e) {
+        if (!cancelado) setError(e instanceof Error ? e.message : "No se pudo cargar la información.");
+      } finally {
+        if (!cancelado) setCargando(false);
+      }
+    })();
+
+    return () => { cancelado = true; };
+  }, [career, cohort, pao]);
+
+  // 2) Al cambiar de asignatura, trae su resultado EF1-EF5 real y su evidencia subida.
+  useEffect(() => {
+    if (!asig || !idEvaluacion) return;
+    let cancelado = false;
+    setCargandoResultado(true);
+
+    (async () => {
+      try {
+        const [res, ev] = await Promise.all([
+          obtenerResultadoAsignatura(asig.id_asignatura, idEvaluacion),
+          obtenerEvidenciaAsignatura(asig.id_asignatura),
+        ]);
+        if (cancelado) return;
+        setResultado(res);
+        setEvidencias(ev);
+      } catch (e) {
+        if (!cancelado) toast.error(e instanceof Error ? e.message : "No se pudo cargar el resultado.");
+      } finally {
+        if (!cancelado) setCargandoResultado(false);
+      }
+    })();
+
+    return () => { cancelado = true; };
+  }, [asig?.id_asignatura, idEvaluacion]);
+
+  async function handleSubirEvidencia(tipo: TipoEvidenciaAsignatura, archivo: File) {
+    if (!asig || !idEvaluacion) return;
+    setSubiendoTipo(tipo);
+    try {
+      await subirEvidenciaAsignatura({ idAsignatura: asig.id_asignatura, tipo, archivo });
+      toast.success("Evidencia subida correctamente.");
+      const [res, ev] = await Promise.all([
+        obtenerResultadoAsignatura(asig.id_asignatura, idEvaluacion),
+        obtenerEvidenciaAsignatura(asig.id_asignatura),
+      ]);
+      setResultado(res);
+      setEvidencias(ev);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "No se pudo subir la evidencia.");
+    } finally {
+      setSubiendoTipo(null);
+    }
+  }
+
+  if (cargando) {
+    return (
+      <div className="h-full flex items-center justify-center gap-2" style={{ color: "#5A7295" }}>
+        <Loader2 size={16} className="animate-spin" /> Cargando resultados reales…
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center gap-2" style={{ color: "#DC2626" }}>
+        <AlertCircle size={20} />
+        <p className="text-sm font-medium">{error}</p>
+      </div>
+    );
+  }
+
+  const efScores = EF_META.map((ef) => ({
     ...ef,
-    raw: asig?.ef[i] ?? 0,
-    pct: Math.round((asig?.ef[i] ?? 0) * 100),
+    pct: resultado?.[ef.key] ?? null,
   }));
-  const total = efScores.reduce((s, ef) => s + ef.raw * ef.weight, 0);
-  const radarData = efScores.map((ef) => ({ subject: ef.id, score: ef.pct, fullMark: 100 }));
+  const total = resultado?.valoracion_general ?? null;
+  const radarData = efScores.map((ef) => ({ subject: ef.id, score: ef.pct ?? 0, fullMark: 100 }));
 
-
-  // EF cells – label as title, id as subtitle, percentage only
   function EfCell({ ef }: { ef: typeof efScores[0] }) {
-    const bc = ef.pct >= 75 ? "#16A34A" : ef.pct >= 50 ? "#CA8A04" : "#DC2626";
+    const pct = ef.pct;
+    const bc = pct === null ? "#9CA3AF" : pct >= 75 ? "#16A34A" : pct >= 50 ? "#CA8A04" : "#DC2626";
     return (
       <div className="rounded-xl p-2.5" style={{ background: "#F8FAFD", border: "1px solid rgba(27,58,107,0.07)" }}>
         <div className="flex items-center justify-between mb-1">
@@ -158,11 +281,11 @@ function TabResults({ ind, career, cohort, pao }: { ind: IndicatorDef; career: C
             <p style={{ color: ef.color, fontFamily: "'DM Mono',monospace", fontSize: 9 }}>{ef.id}</p>
           </div>
           <span className="font-bold" style={{ color: bc, fontFamily: "'DM Mono',monospace", fontSize: 13 }}>
-            {ef.pct}%
+            {pct === null ? "—" : `${pct}%`}
           </span>
         </div>
         <div className="h-1 rounded-full overflow-hidden" style={{ background: "#E5E7EB" }}>
-          <div className="h-full rounded-full transition-all duration-500" style={{ width: `${ef.pct}%`, background: bc }} />
+          <div className="h-full rounded-full transition-all duration-500" style={{ width: `${pct ?? 0}%`, background: bc }} />
         </div>
       </div>
     );
@@ -171,13 +294,11 @@ function TabResults({ ind, career, cohort, pao }: { ind: IndicatorDef; career: C
   return (
     <div className="h-full flex px-6 py-4 gap-4 overflow-hidden" style={{ maxWidth: "none" }}>
 
-      {/* ── LEFT 50%: subject card + list ─────────────────────────── */}
+      {/* ── LEFT: subject card + list + subida de evidencia ─────────── */}
       <div className="flex-1 flex flex-col gap-3 min-h-0 min-w-0">
 
-        {/* Career/Cohort/PAO card with Valoración General */}
         {(() => {
-          const asigPct = Math.round(total * 100);
-          const st = getStatus(asigPct);
+          const st = getStatus(total ?? 0);
           return (
             <div className="flex-shrink-0 bg-white rounded-2xl px-4 py-3 flex items-center justify-between gap-3"
               style={{ border: "1px solid rgba(27,58,107,0.08)" }}>
@@ -187,62 +308,95 @@ function TabResults({ ind, career, cohort, pao }: { ind: IndicatorDef; career: C
               </div>
               <div className="text-right flex-shrink-0">
                 <p className="text-xs font-bold uppercase tracking-widest mb-0.5" style={{ color: "#5A7295" }}>Valoración General</p>
-                <p className="text-2xl font-bold leading-none" style={{ color: st.color, fontFamily: "'DM Mono',monospace" }}>{asigPct}%</p>
-                <p className="text-xs mt-0.5 font-semibold px-2 py-0.5 rounded-full inline-block"
-                  style={{ background: st.bg, color: st.color }}>{st.label}</p>
+                <p className="text-2xl font-bold leading-none" style={{ color: total === null ? "#9CA3AF" : st.color, fontFamily: "'DM Mono',monospace" }}>
+                  {total === null ? "—" : `${total}%`}
+                </p>
+                {total !== null && (
+                  <p className="text-xs mt-0.5 font-semibold px-2 py-0.5 rounded-full inline-block"
+                    style={{ background: st.bg, color: st.color }}>{st.label}</p>
+                )}
               </div>
             </div>
           );
         })()}
 
-        {/* Subject list */}
-        <div className="flex-1 bg-white rounded-2xl overflow-hidden flex flex-col min-h-0"
-          style={{ border: "1px solid rgba(27,58,107,0.08)" }}>
+        <div className="flex-shrink-0 bg-white rounded-2xl overflow-hidden flex flex-col"
+          style={{ border: "1px solid rgba(27,58,107,0.08)", maxHeight: "40%" }}>
           <div className="px-4 py-2 flex-shrink-0" style={{ borderBottom: "1px solid rgba(27,58,107,0.07)", background: "#F8FAFD" }}>
             <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "#5A7295" }}>Asignaturas</p>
           </div>
-          <div className="flex flex-col flex-1 overflow-auto">
+          <div className="flex flex-col overflow-auto">
             {asignaturas.map((a, ai) => {
               const active = selectedAsig === ai;
-              const subTotal = EF_DEFS.reduce((s, ef, i) => s + a.ef[i] * ef.weight, 0);
-              const subSt = getStatus(Math.round(subTotal * 100));
               return (
-                <button key={a.name} onClick={() => setSelectedAsig(ai)}
-                  className="flex-shrink-0 w-full text-left px-3 flex items-center justify-between gap-2 transition-colors hover:bg-blue-50"
+                <button key={a.id_asignatura} onClick={() => setSelectedAsig(ai)}
+                  className="flex-shrink-0 w-full text-left px-3 flex items-center gap-2 transition-colors hover:bg-blue-50"
                   style={{ height: 36, borderBottom: "1px solid rgba(27,58,107,0.05)", background: active ? "#EEF5FF" : "transparent", borderLeft: `3px solid ${active ? "#1B3A6B" : "transparent"}` }}>
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: subSt.color }} />
-                    <p className="text-xs font-semibold truncate" style={{ color: active ? "#1B3A6B" : "#0F1E3C" }}>{a.name}</p>
-                  </div>
-                  <span className="text-xs font-bold flex-shrink-0" style={{ color: subSt.color, fontFamily: "'DM Mono',monospace" }}>
-                    {subTotal > 0 ? `${Math.round(subTotal * 100)}%` : "—"}
-                  </span>
+                  <p className="text-xs font-semibold truncate" style={{ color: active ? "#1B3A6B" : "#0F1E3C" }}>{a.nombre}</p>
                 </button>
+              );
+            })}
+            {asignaturas.length === 0 && (
+              <p className="text-xs px-3 py-3" style={{ color: "#94A3B8" }}>No hay asignaturas cargadas para este PAO.</p>
+            )}
+          </div>
+        </div>
+
+        {/* Subida de evidencia por asignatura */}
+        <div className="flex-1 bg-white rounded-2xl overflow-hidden flex flex-col min-h-0"
+          style={{ border: "1px solid rgba(27,58,107,0.08)" }}>
+          <div className="px-4 py-2 flex-shrink-0" style={{ borderBottom: "1px solid rgba(27,58,107,0.07)", background: "#F8FAFD" }}>
+            <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "#5A7295" }}>
+              Evidencia de "{asig?.nombre ?? "—"}"
+            </p>
+          </div>
+          <div className="flex-1 overflow-auto p-3 flex flex-col gap-2">
+            {TIPOS_EVIDENCIA_ASIGNATURA.map(({ tipo, label }) => {
+              const item = evidencias.find((e) => e.tipo === tipo);
+              const subida = item?.subida ?? false;
+              const subiendo = subiendoTipo === tipo;
+              return (
+                <div key={tipo} className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl"
+                  style={{ background: "#F8FAFD", border: "1px solid rgba(27,58,107,0.06)" }}>
+                  <div className="flex items-center gap-2 min-w-0">
+                    {subida ? <CheckCircle2 size={14} style={{ color: "#16A34A" }} /> : <AlertCircle size={14} style={{ color: "#94A3B8" }} />}
+                    <span className="text-xs font-medium truncate" style={{ color: "#0F1E3C" }}>{label}</span>
+                  </div>
+                  <label className="flex-shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold cursor-pointer transition-opacity hover:opacity-80"
+                    style={{ background: subida ? "#EEF2F7" : "#1B3A6B", color: subida ? "#1B3A6B" : "#fff" }}>
+                    {subiendo ? <Loader2 size={11} className="animate-spin" /> : <Upload size={11} />}
+                    {subida ? "Reemplazar" : "Subir"}
+                    <input type="file" accept="application/pdf" className="hidden" disabled={subiendo}
+                      onChange={(e) => {
+                        const archivo = e.target.files?.[0];
+                        if (archivo) handleSubirEvidencia(tipo, archivo);
+                        e.target.value = "";
+                      }} />
+                  </label>
+                </div>
               );
             })}
           </div>
         </div>
       </div>
 
-      {/* ── RIGHT 50%: "Resultados por EF" — no scroll ────────────── */}
+      {/* ── RIGHT: Resultados por EF ─────────────────────────────────── */}
       <div className="flex-1 bg-white rounded-2xl flex flex-col min-h-0 min-w-0 overflow-hidden"
         style={{ border: "1px solid rgba(27,58,107,0.08)" }}>
 
-        {/* Card header */}
         <div className="flex items-center justify-between px-5 py-2.5 flex-shrink-0"
           style={{ borderBottom: "1px solid rgba(27,58,107,0.07)", background: "#F8FAFD" }}>
           <div>
-            <h3 className="font-bold" style={{ fontFamily: "'Libre Baskerville',serif", color: "#0F1E3C", fontSize: 13 }}>{asig.name}</h3>
+            <h3 className="font-bold" style={{ fontFamily: "'Libre Baskerville',serif", color: "#0F1E3C", fontSize: 13 }}>{asig?.nombre ?? "—"}</h3>
           </div>
-          {(() => { const st = getStatus(Math.round(total * 100)); return (
+          {(() => { const st = getStatus(total ?? 0); return (
             <span className="px-2.5 py-1 rounded-lg font-bold flex-shrink-0"
-              style={{ background: st.bg, color: st.color, fontFamily: "'DM Mono',monospace", fontSize: 13 }}>
-              {total > 0 ? `${Math.round(total * 100)}%` : "Sin datos"}
+              style={{ background: total === null ? "#F1F5F9" : st.bg, color: total === null ? "#94A3B8" : st.color, fontFamily: "'DM Mono',monospace", fontSize: 13 }}>
+              {cargandoResultado ? "…" : total === null ? "Sin datos" : `${total}%`}
             </span>
           ); })()}
         </div>
 
-        {/* Radar — flex-shrink-0 with fixed height */}
         <div className="flex-shrink-0 px-4 pt-2" style={{ height: 185 }}>
           <ResponsiveContainer width="100%" height="100%">
             <RadarChart data={radarData} cx="50%" cy="50%" outerRadius="60%">
@@ -254,7 +408,6 @@ function TabResults({ ind, career, cohort, pao }: { ind: IndicatorDef; career: C
           </ResponsiveContainer>
         </div>
 
-        {/* EF grid — flex-1, fits remaining height */}
         <div className="flex-1 px-4 pb-2 flex flex-col gap-1.5 min-h-0">
           <div className="grid grid-cols-2 gap-1.5 flex-shrink-0">
             <EfCell ef={efScores[0]} />
@@ -266,20 +419,18 @@ function TabResults({ ind, career, cohort, pao }: { ind: IndicatorDef; career: C
           </div>
           <EfCell ef={efScores[4]} />
 
-          {/* Footer note */}
           <div className="flex items-center gap-1.5 flex-shrink-0 mt-0.5">
             <AlertCircle size={10} style={{ color: "#94A3B8", flexShrink: 0 }} />
             <p style={{ color: "#94A3B8", fontSize: 10 }}>
-              Calculado automáticamente desde Google Forms · EF1, EF3, EF4 y EF5.
+              EF1 y EF4 calculados en vivo desde Google Forms ({resultado?.respuestas ?? 0} respuestas) · EF2, EF3, EF5 desde evidencia subida.
             </p>
           </div>
         </div>
 
-        {/* Export button */}
         <div className="flex justify-end px-4 py-2.5 flex-shrink-0"
           style={{ borderTop: "1px solid rgba(27,58,107,0.07)" }}>
           <button
-            onClick={() => toast.success(`Exportando "${asig.name}" a PDF…`, { description: "El reporte se descargará en breve." })}
+            onClick={() => toast.success(`Exportando "${asig?.nombre ?? ""}" a PDF…`, { description: "El reporte se descargará en breve." })}
             className="flex items-center gap-1.5 px-4 py-2 rounded-xl font-bold transition-all hover:opacity-90 active:scale-95"
             style={{ background: "#1B3A6B", color: "#fff", fontSize: 12 }}>
             <Download size={12} /> Exportar PDF
