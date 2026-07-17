@@ -790,19 +790,60 @@ function TabEvidences({
         }
 
         const nuevasSlots = ind.slots.map((slot) => {
-          const propia = guardadas.find(
-            (evidencia) =>
-              Number(evidencia.orden) ===
-              Number(slot.sourceNum),
-          );
+        
+          let propia;
+let compartida;
 
-          const compartida = compartidas.find(
-            (evidencia) =>
-              Number(evidencia.orden) ===
-              Number(slot.sourceNum),
-          );
+/*
+ * En Tasa de Titulación el orden visual es:
+ * 1 = Matriculados  -> DOC.TIT.02
+ * 2 = Graduados     -> DOC.TIT.01
+ */
+if (
+  ind.id === "I5" &&
+  slot.sourceNum === 1
+) {
+  propia = guardadas.find(
+    (evidencia) =>
+      evidencia.codigo_evidencia ===
+      "DOC.TIT.02",
+  );
 
-          const evidencia = propia ?? compartida;
+  compartida = compartidas.find(
+    (evidencia) =>
+      evidencia.codigo_evidencia ===
+      "DOC.TIT.02",
+  );
+} else if (
+  ind.id === "I5" &&
+  slot.sourceNum === 2
+) {
+  propia = guardadas.find(
+    (evidencia) =>
+      evidencia.codigo_evidencia ===
+      "DOC.TIT.01",
+  );
+
+  compartida = compartidas.find(
+    (evidencia) =>
+      evidencia.codigo_evidencia ===
+      "DOC.TIT.01",
+  );
+} else {
+  propia = guardadas.find(
+    (evidencia) =>
+      Number(evidencia.orden) ===
+      Number(slot.sourceNum),
+  );
+
+  compartida = compartidas.find(
+    (evidencia) =>
+      Number(evidencia.orden) ===
+      Number(slot.sourceNum),
+  );
+}
+
+const evidencia = propia ?? compartida;
 
           if (!evidencia) {
             return {
@@ -1033,13 +1074,15 @@ function TabEvidences({
                     </p>
 
                     {slot.file ? (
-                      <CheckCircle2
-                        size={14}
+                      <span
+                        className="text-xs font-semibold px-2 py-0.5 rounded-full flex-shrink-0"
                         style={{
-                          color: "#16A34A",
-                          flexShrink: 0,
+                          background: "#DCFCE7",
+                          color: "#15803D",
                         }}
-                      />
+                      >
+                        Cargado
+                      </span>
                     ) : (
                       <span
                         className="text-xs font-semibold px-2 py-0.5 rounded-full flex-shrink-0"
