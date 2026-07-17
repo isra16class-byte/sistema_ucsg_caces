@@ -2,10 +2,12 @@ import { useEffect, useState } from "react";
 
 import {
   obtenerDatosTasa,
+  obtenerDatosDesercion,
   obtenerEvaluacion,
   obtenerEvidenciasCompartidas,
   obtenerEvidenciasGuardadas,
   type CohorteTitulacion,
+  type CohorteDesercion,
 } from "../services/evidencias";
 import {
   AlertCircle,
@@ -444,9 +446,16 @@ function TabCohorts({
   career: Career | null;
   cohort: string;
 }) {
-  const [datos, setDatos] = useState<CohorteTitulacion[]>([]);
+  const [datosTitulacion, setDatosTitulacion] =
+    useState<CohorteTitulacion[]>([]);
+
+  const [datosDesercion, setDatosDesercion] =
+    useState<CohorteDesercion[]>([]);
+
   const [cargando, setCargando] = useState(true);
   const [errorCarga, setErrorCarga] = useState("");
+
+  const esDesercion = ind.id === "I4";
 
   useEffect(() => {
     void cargar();
@@ -457,27 +466,37 @@ function TabCohorts({
     setErrorCarga("");
 
     try {
-      if (ind.id !== "I5") {
-        setDatos([]);
-        return;
-      }
-
       if (!career) {
-        throw new Error("No se ha seleccionado una carrera.");
+        throw new Error(
+          "No se ha seleccionado una carrera.",
+        );
       }
 
-      const cohorteNormalizada = cohort.replace(/\s+/g, "");
+      const cohorteNormalizada = cohort
+        .replace(/\s+/g, "")
+        .toUpperCase();
 
       const evaluacion = await obtenerEvaluacion(
         career.code,
         cohorteNormalizada,
       );
 
-      const respuesta = await obtenerDatosTasa(
-        evaluacion.id_evaluacion,
-      );
+      if (esDesercion) {
+        const respuesta =
+          await obtenerDatosDesercion(
+            evaluacion.id_evaluacion,
+          );
 
-      setDatos(respuesta);
+        setDatosDesercion(respuesta);
+        setDatosTitulacion([]);
+      } else {
+        const respuesta = await obtenerDatosTasa(
+          evaluacion.id_evaluacion,
+        );
+
+        setDatosTitulacion(respuesta);
+        setDatosDesercion([]);
+      }
     } catch (error) {
       console.error(error);
 
@@ -487,31 +506,95 @@ function TabCohorts({
           : "No se pudieron cargar los datos de cohortes.";
 
       setErrorCarga(mensaje);
-      setDatos([]);
+      setDatosTitulacion([]);
+      setDatosDesercion([]);
     } finally {
       setCargando(false);
     }
   }
 
-  const totalMatriculados = datos.reduce(
-    (suma, item) => suma + Number(item.matriculados ?? 0),
+  const cantidadRegistros = esDesercion
+    ? datosDesercion.length
+    : datosTitulacion.length;
+
+  const totalPrimerNivel = datosDesercion.reduce(
+    (suma, item) =>
+      suma +
+      Number(item.iniciaron_primer_nivel ?? 0),
     0,
   );
 
-  const totalGraduados = datos.reduce(
-    (suma, item) => suma + Number(item.graduados ?? 0),
+  const totalSegundoAnio = datosDesercion.reduce(
+    (suma, item) =>
+      suma +
+      Number(item.matriculados_segundo_anio ?? 0),
     0,
   );
 
-  const tasaGeneral =
+  const totalDesertados = datosDesercion.reduce(
+    (suma, item) =>
+      suma + Number(item.no_continuaron ?? 0),
+    0,
+  );
+
+  const tasaPromedioDesercion =
+    datosDesercion.length === 0
+      ? 0
+      : Number(
+          (
+            datosDesercion.reduce(
+              (suma, item) =>
+                suma + Number(item.tasa ?? 0),
+              0,
+            ) / datosDesercion.length
+          ).toFixed(2),
+        );
+
+  const totalMatriculados = datosTitulacion.reduce(
+    (suma, item) =>
+      suma + Number(item.matriculados ?? 0),
+    0,
+  );
+
+  const totalGraduados = datosTitulacion.reduce(
+    (suma, item) =>
+      suma + Number(item.graduados ?? 0),
+    0,
+  );
+
+  const tasaGeneralTitulacion =
     totalMatriculados === 0
       ? 0
       : Number(
-          ((totalGraduados / totalMatriculados) * 100).toFixed(2),
+          (
+            (totalGraduados / totalMatriculados) *
+            100
+          ).toFixed(2),
         );
 
+  const encabezados = esDesercion
+    ? [
+        "Cohorte",
+        "Matriculados 1er nivel",
+        "Matriculados 2do año",
+        "Desertados 2do año",
+        "Tasa",
+        "Estado",
+      ]
+    : [
+        "Cohorte",
+        "Matriculados",
+        "Graduados",
+        "Tasa",
+        "Estado",
+      ];
+
   return (
-    <div className="h-full flex flex-col px-6 py-4 max-w-4xl mx-auto overflow-hidden">
+    <div
+      className={`h-full flex flex-col px-6 py-4 mx-auto overflow-hidden ${
+        esDesercion ? "max-w-6xl" : "max-w-4xl"
+      }`}
+    >
       <div
         className="bg-white rounded-2xl overflow-hidden flex-1 min-h-0 flex flex-col"
         style={{
@@ -521,14 +604,16 @@ function TabCohorts({
         <div
           className="px-6 py-4 flex-shrink-0"
           style={{
-            borderBottom: "1px solid rgba(27,58,107,0.07)",
+            borderBottom:
+              "1px solid rgba(27,58,107,0.07)",
             background: "#F8FAFD",
           }}
         >
           <h3
             className="text-sm font-semibold"
             style={{
-              fontFamily: "'Libre Baskerville',serif",
+              fontFamily:
+                "'Libre Baskerville',serif",
               color: "#0F1E3C",
             }}
           >
@@ -539,13 +624,17 @@ function TabCohorts({
             className="text-xs mt-1"
             style={{ color: "#5A7295" }}
           >
-            Carrera: {career?.name ?? "—"} · Cohorte seleccionada: {cohort}
+            Carrera: {career?.name ?? "—"} · Cohorte
+            seleccionada: {cohort}
           </p>
         </div>
 
         {cargando ? (
           <div className="flex-1 flex items-center justify-center">
-            <p className="text-sm" style={{ color: "#5A7295" }}>
+            <p
+              className="text-sm"
+              style={{ color: "#5A7295" }}
+            >
               Cargando datos...
             </p>
           </div>
@@ -556,150 +645,399 @@ function TabCohorts({
               className="mb-3"
               style={{ color: "#DC2626" }}
             />
-            <p className="text-sm font-semibold" style={{ color: "#DC2626" }}>
+
+            <p
+              className="text-sm font-semibold"
+              style={{ color: "#DC2626" }}
+            >
               No se pudieron cargar los datos
             </p>
-            <p className="text-xs mt-1 max-w-md" style={{ color: "#6B7280" }}>
+
+            <p
+              className="text-xs mt-1 max-w-md"
+              style={{ color: "#6B7280" }}
+            >
               {errorCarga}
             </p>
           </div>
-        ) : datos.length === 0 ? (
+        ) : cantidadRegistros === 0 ? (
           <div className="flex-1 flex flex-col items-center justify-center text-center px-6">
             <TableProperties
               size={36}
               className="mb-3"
               style={{ color: "#D1D5DB" }}
             />
-            <p className="text-sm font-medium" style={{ color: "#6B7280" }}>
+
+            <p
+              className="text-sm font-medium"
+              style={{ color: "#6B7280" }}
+            >
               Sin datos de cohortes
             </p>
-            <p className="text-xs mt-1 max-w-sm" style={{ color: "#9CA3AF" }}>
-              Los resultados aparecerán cuando se lean y guarden los PDF de matriculados y graduados.
+
+            <p
+              className="text-xs mt-1 max-w-sm"
+              style={{ color: "#9CA3AF" }}
+            >
+              {esDesercion
+                ? "Los resultados aparecerán cuando se lean y guarden los PDF de primer nivel, segundo año y estudiantes desertados."
+                : "Los resultados aparecerán cuando se lean y guarden los PDF de matriculados y graduados."}
             </p>
           </div>
         ) : (
           <div className="flex-1 overflow-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr style={{ borderBottom: "1px solid rgba(27,58,107,0.07)" }}>
-                  {["Cohorte", "Matriculados", "Graduados", "Tasa", "Estado"].map(
-                    (encabezado) => (
-                      <th
-                        key={encabezado}
-                        className="px-6 py-3 text-left text-xs font-bold uppercase tracking-wider"
-                        style={{
-                          color: "#5A7295",
-                          background: "#F8FAFD",
-                        }}
-                      >
-                        {encabezado}
-                      </th>
-                    ),
-                  )}
+                <tr
+                  style={{
+                    borderBottom:
+                      "1px solid rgba(27,58,107,0.07)",
+                  }}
+                >
+                  {encabezados.map((encabezado) => (
+                    <th
+                      key={encabezado}
+                      className="px-5 py-3 text-left text-xs font-bold uppercase tracking-wider"
+                      style={{
+                        color: "#5A7295",
+                        background: "#F8FAFD",
+                      }}
+                    >
+                      {encabezado}
+                    </th>
+                  ))}
                 </tr>
               </thead>
 
               <tbody>
-                {datos.map((item, index) => {
-                  const tasa = Number(item.tasa ?? 0);
-                  const estado = getStatus(Math.round(tasa));
-                  const esActual = item.cohorte.replace(/\s+/g, "") === cohort.replace(/\s+/g, "");
+                {esDesercion
+                  ? datosDesercion.map(
+                      (item, index) => {
+                        const tasa = Number(
+                          item.tasa ?? 0,
+                        );
 
-                  return (
-                    <tr
-                      key={`${item.cohorte}-${index}`}
-                      style={{
-                        borderBottom: "1px solid rgba(27,58,107,0.05)",
-                        background: esActual
-                          ? "#EEF5FF"
-                          : index % 2 === 0
-                            ? "#FFFFFF"
-                            : "#FAFBFD",
-                      }}
-                    >
-                      <td className="px-6 py-3">
-                        <div className="flex items-center gap-2">
-                          <span
-                            className="font-bold"
+                        const estado = getStatus(
+                          Math.round(tasa),
+                        );
+
+                        const esActual =
+                          item.cohorte
+                            .replace(/\s+/g, "")
+                            .toUpperCase() ===
+                          cohort
+                            .replace(/\s+/g, "")
+                            .toUpperCase();
+
+                        return (
+                          <tr
+                            key={`${item.cohorte}-${index}`}
                             style={{
-                              fontFamily: "'DM Mono',monospace",
-                              color: esActual ? "#1B3A6B" : "#0F1E3C",
+                              borderBottom:
+                                "1px solid rgba(27,58,107,0.05)",
+                              background: esActual
+                                ? "#EEF5FF"
+                                : index % 2 === 0
+                                  ? "#FFFFFF"
+                                  : "#FAFBFD",
                             }}
                           >
-                            Cohorte {item.cohorte}
-                          </span>
+                            <td className="px-5 py-3">
+                              <div className="flex items-center gap-2">
+                                <span
+                                  className="font-bold"
+                                  style={{
+                                    fontFamily:
+                                      "'DM Mono',monospace",
+                                    color: esActual
+                                      ? "#1B3A6B"
+                                      : "#0F1E3C",
+                                  }}
+                                >
+                                  Cohorte {item.cohorte}
+                                </span>
 
-                          {esActual && (
-                            <span
-                              className="text-xs px-2 py-0.5 rounded-full font-bold"
-                              style={{ background: "#1B3A6B", color: "#FFFFFF" }}
+                                {esActual && (
+                                  <span
+                                    className="text-xs px-2 py-0.5 rounded-full font-bold"
+                                    style={{
+                                      background:
+                                        "#1B3A6B",
+                                      color: "#FFFFFF",
+                                    }}
+                                  >
+                                    actual
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+
+                            <td
+                              className="px-5 py-3"
+                              style={{ color: "#374151" }}
                             >
-                              actual
-                            </span>
-                          )}
-                        </div>
-                      </td>
+                              {Number(
+                                item.iniciaron_primer_nivel ??
+                                  0,
+                              )}
+                            </td>
 
-                      <td className="px-6 py-3" style={{ color: "#374151" }}>
-                        {Number(item.matriculados ?? 0)}
-                      </td>
+                            <td
+                              className="px-5 py-3"
+                              style={{ color: "#374151" }}
+                            >
+                              {Number(
+                                item.matriculados_segundo_anio ??
+                                  0,
+                              )}
+                            </td>
 
-                      <td className="px-6 py-3" style={{ color: "#374151" }}>
-                        {Number(item.graduados ?? 0)}
-                      </td>
+                            <td
+                              className="px-5 py-3"
+                              style={{ color: "#374151" }}
+                            >
+                              {Number(
+                                item.no_continuaron ?? 0,
+                              )}
+                            </td>
 
-                      <td className="px-6 py-3">
-                        <span
-                          className="font-bold px-2.5 py-1 rounded-lg"
-                          style={{
-                            background: estado.bg,
-                            color: estado.color,
-                            fontFamily: "'DM Mono',monospace",
-                          }}
-                        >
-                          {tasa.toFixed(2)}%
-                        </span>
-                      </td>
+                            <td className="px-5 py-3">
+                              <span
+                                className="font-bold px-2.5 py-1 rounded-lg"
+                                style={{
+                                  background: estado.bg,
+                                  color: estado.color,
+                                  fontFamily:
+                                    "'DM Mono',monospace",
+                                }}
+                              >
+                                {tasa.toFixed(2)}%
+                              </span>
+                            </td>
 
-                      <td className="px-6 py-3">
-                        <span
-                          className="text-xs px-2 py-0.5 rounded-full font-semibold"
-                          style={{ background: estado.bg, color: estado.color }}
-                        >
-                          {estado.label}
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })}
+                            <td className="px-5 py-3">
+                              <span
+                                className="text-xs px-2 py-0.5 rounded-full font-semibold"
+                                style={{
+                                  background: estado.bg,
+                                  color: estado.color,
+                                }}
+                              >
+                                {estado.label}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      },
+                    )
+                  : datosTitulacion.map(
+                      (item, index) => {
+                        const tasa = Number(
+                          item.tasa ?? 0,
+                        );
+
+                        const estado = getStatus(
+                          Math.round(tasa),
+                        );
+
+                        const esActual =
+                          item.cohorte
+                            .replace(/\s+/g, "")
+                            .toUpperCase() ===
+                          cohort
+                            .replace(/\s+/g, "")
+                            .toUpperCase();
+
+                        return (
+                          <tr
+                            key={`${item.cohorte}-${index}`}
+                            style={{
+                              borderBottom:
+                                "1px solid rgba(27,58,107,0.05)",
+                              background: esActual
+                                ? "#EEF5FF"
+                                : index % 2 === 0
+                                  ? "#FFFFFF"
+                                  : "#FAFBFD",
+                            }}
+                          >
+                            <td className="px-5 py-3">
+                              <div className="flex items-center gap-2">
+                                <span
+                                  className="font-bold"
+                                  style={{
+                                    fontFamily:
+                                      "'DM Mono',monospace",
+                                    color: esActual
+                                      ? "#1B3A6B"
+                                      : "#0F1E3C",
+                                  }}
+                                >
+                                  Cohorte {item.cohorte}
+                                </span>
+
+                                {esActual && (
+                                  <span
+                                    className="text-xs px-2 py-0.5 rounded-full font-bold"
+                                    style={{
+                                      background:
+                                        "#1B3A6B",
+                                      color: "#FFFFFF",
+                                    }}
+                                  >
+                                    actual
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+
+                            <td
+                              className="px-5 py-3"
+                              style={{ color: "#374151" }}
+                            >
+                              {Number(
+                                item.matriculados ?? 0,
+                              )}
+                            </td>
+
+                            <td
+                              className="px-5 py-3"
+                              style={{ color: "#374151" }}
+                            >
+                              {Number(
+                                item.graduados ?? 0,
+                              )}
+                            </td>
+
+                            <td className="px-5 py-3">
+                              <span
+                                className="font-bold px-2.5 py-1 rounded-lg"
+                                style={{
+                                  background: estado.bg,
+                                  color: estado.color,
+                                  fontFamily:
+                                    "'DM Mono',monospace",
+                                }}
+                              >
+                                {tasa.toFixed(2)}%
+                              </span>
+                            </td>
+
+                            <td className="px-5 py-3">
+                              <span
+                                className="text-xs px-2 py-0.5 rounded-full font-semibold"
+                                style={{
+                                  background: estado.bg,
+                                  color: estado.color,
+                                }}
+                              >
+                                {estado.label}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      },
+                    )}
               </tbody>
 
-              {datos.length > 1 && (
+              {cantidadRegistros > 1 && (
                 <tfoot>
                   <tr
                     style={{
-                      borderTop: "2px solid rgba(27,58,107,0.12)",
+                      borderTop:
+                        "2px solid rgba(27,58,107,0.12)",
                       background: "#EEF2F7",
                     }}
                   >
                     <td
-                      className="px-6 py-3 text-xs font-bold uppercase"
+                      className="px-5 py-3 text-xs font-bold uppercase"
                       style={{ color: "#5A7295" }}
                     >
-                      Totales
+                      {esDesercion
+                        ? "Totales / promedio"
+                        : "Totales"}
                     </td>
-                    <td className="px-6 py-3 font-bold" style={{ color: "#0F1E3C" }}>
-                      {totalMatriculados}
-                    </td>
-                    <td className="px-6 py-3 font-bold" style={{ color: "#0F1E3C" }}>
-                      {totalGraduados}
-                    </td>
-                    <td className="px-6 py-3 font-bold" style={{ color: "#0F1E3C" }}>
-                      {tasaGeneral.toFixed(2)}%
-                    </td>
-                    <td className="px-6 py-3">
-                      {getStatus(Math.round(tasaGeneral)).label}
-                    </td>
+
+                    {esDesercion ? (
+                      <>
+                        <td
+                          className="px-5 py-3 font-bold"
+                          style={{ color: "#0F1E3C" }}
+                        >
+                          {totalPrimerNivel}
+                        </td>
+
+                        <td
+                          className="px-5 py-3 font-bold"
+                          style={{ color: "#0F1E3C" }}
+                        >
+                          {totalSegundoAnio}
+                        </td>
+
+                        <td
+                          className="px-5 py-3 font-bold"
+                          style={{ color: "#0F1E3C" }}
+                        >
+                          {totalDesertados}
+                        </td>
+
+                        <td
+                          className="px-5 py-3 font-bold"
+                          style={{ color: "#0F1E3C" }}
+                        >
+                          {tasaPromedioDesercion.toFixed(
+                            2,
+                          )}
+                          %
+                        </td>
+
+                        <td className="px-5 py-3">
+                          {
+                            getStatus(
+                              Math.round(
+                                tasaPromedioDesercion,
+                              ),
+                            ).label
+                          }
+                        </td>
+                      </>
+                    ) : (
+                      <>
+                        <td
+                          className="px-5 py-3 font-bold"
+                          style={{ color: "#0F1E3C" }}
+                        >
+                          {totalMatriculados}
+                        </td>
+
+                        <td
+                          className="px-5 py-3 font-bold"
+                          style={{ color: "#0F1E3C" }}
+                        >
+                          {totalGraduados}
+                        </td>
+
+                        <td
+                          className="px-5 py-3 font-bold"
+                          style={{ color: "#0F1E3C" }}
+                        >
+                          {tasaGeneralTitulacion.toFixed(
+                            2,
+                          )}
+                          %
+                        </td>
+
+                        <td className="px-5 py-3">
+                          {
+                            getStatus(
+                              Math.round(
+                                tasaGeneralTitulacion,
+                              ),
+                            ).label
+                          }
+                        </td>
+                      </>
+                    )}
                   </tr>
                 </tfoot>
               )}
@@ -790,17 +1128,97 @@ function TabEvidences({
         }
 
         const nuevasSlots = ind.slots.map((slot) => {
-          const propia = guardadas.find(
-            (evidencia) =>
-              Number(evidencia.orden) ===
-              Number(slot.sourceNum),
-          );
+          let propia;
+          let compartida;
 
-          const compartida = compartidas.find(
-            (evidencia) =>
-              Number(evidencia.orden) ===
-              Number(slot.sourceNum),
-          );
+          /*
+           * I5 - Tasa de Titulación:
+           * 1 = Matriculados de primer nivel -> DOC.TIT.02
+           * 2 = Graduados                    -> DOC.TIT.01
+           *
+           * I4 - Tasa de Deserción:
+           * 1 = Matriculados de primer nivel comparte DOC.TIT.02
+           * 2 = Matriculados de segundo nivel conserva su evidencia propia
+           * 3 = Estudiantes desertados conserva su evidencia propia
+           */
+          if (
+            ind.id === "I5" &&
+            slot.sourceNum === 1
+          ) {
+            propia = guardadas.find(
+              (evidencia) =>
+                evidencia.codigo_evidencia ===
+                "DOC.TIT.02",
+            );
+
+            compartida = compartidas.find(
+              (evidencia) =>
+                evidencia.codigo_evidencia ===
+                "DOC.TIT.02",
+            );
+          } else if (
+            ind.id === "I5" &&
+            slot.sourceNum === 2
+          ) {
+            propia = guardadas.find(
+              (evidencia) =>
+                evidencia.codigo_evidencia ===
+                "DOC.TIT.01",
+            );
+
+            compartida = compartidas.find(
+              (evidencia) =>
+                evidencia.codigo_evidencia ===
+                "DOC.TIT.01",
+            );
+          } else if (
+            ind.id === "I4" &&
+            slot.sourceNum === 1
+          ) {
+            propia = guardadas.find(
+              (evidencia) =>
+                evidencia.codigo_evidencia ===
+                "DOC.TIT.02",
+            );
+
+            compartida = compartidas.find(
+              (evidencia) =>
+                evidencia.codigo_evidencia ===
+                "DOC.TIT.02",
+            );
+          } else if (
+            ind.id === "I4" &&
+            (slot.sourceNum === 2 ||
+              slot.sourceNum === 3)
+          ) {
+            /*
+             * I4:
+             * - segundo nivel;
+             * - estudiantes desertados.
+             *
+             * Estas evidencias NO se comparten con otros indicadores.
+             * Solo se consultan entre las evidencias propias de I4.
+             */
+            propia = guardadas.find(
+              (evidencia) =>
+                Number(evidencia.orden) ===
+                Number(slot.sourceNum),
+            );
+
+            compartida = undefined;
+          } else {
+            propia = guardadas.find(
+              (evidencia) =>
+                Number(evidencia.orden) ===
+                Number(slot.sourceNum),
+            );
+
+            compartida = compartidas.find(
+              (evidencia) =>
+                Number(evidencia.orden) ===
+                Number(slot.sourceNum),
+            );
+          }
 
           const evidencia = propia ?? compartida;
 
@@ -1033,13 +1451,15 @@ function TabEvidences({
                     </p>
 
                     {slot.file ? (
-                      <CheckCircle2
-                        size={14}
+                      <span
+                        className="text-xs font-semibold px-2 py-0.5 rounded-full flex-shrink-0"
                         style={{
-                          color: "#16A34A",
-                          flexShrink: 0,
+                          background: "#DCFCE7",
+                          color: "#15803D",
                         }}
-                      />
+                      >
+                        Cargado
+                      </span>
                     ) : (
                       <span
                         className="text-xs font-semibold px-2 py-0.5 rounded-full flex-shrink-0"

@@ -2,6 +2,7 @@ import { Toaster } from "sonner";
 import {
   obtenerEvaluacion,
   obtenerDatosTasa,
+  obtenerDatosDesercion,
 } from "../services/evidencias";
 
 import { useEffect, useState } from "react";
@@ -132,17 +133,17 @@ function makeIndicators(
         {
           sourceNum: 1,
           label:
-            "Estudiantes matriculados 1er nivel",
+            "Estudiantes matriculados en 1er nivel",
           sharedKey: "matriculados",
         },
         {
           sourceNum: 2,
           label:
-            "Estudiantes matriculados 2do nivel",
+            "Estudiantes matriculados en 2do año",
         },
         {
           sourceNum: 3,
-          label: "Estudiantes desertados",
+          label: "Estudiantes desertados en 2do año",
         },
       ],
     },
@@ -224,109 +225,164 @@ export default function App() {
     usuario?.rol === "coordinador";
 
   useEffect(() => {
-  if (
-    view !== "dashboard" ||
-    !career
-  ) {
-    return;
-  }
+    if (
+      view !== "dashboard" ||
+      !career
+    ) {
+      return;
+    }
 
-  const carreraActual = career;
+    const carreraActual = career;
+    let cancelado = false;
 
-  let cancelado = false;
-
-  async function cargarResultadoTitulacion() {
-    try {
-      const cohorteNormalizada =
-        selectedCohort
-          .replace(/\s+/g, "")
-          .toUpperCase();
-
-      const evaluacion =
-        await obtenerEvaluacion(
-          carreraActual.code,
-          cohorteNormalizada,
-        );
-
-      const datos =
-        await obtenerDatosTasa(
-          evaluacion.id_evaluacion,
-        );
-
-      if (cancelado) {
-        return;
-      }
-
-      const registroActual = datos.find(
-        (dato) =>
-          dato.cohorte
+    async function cargarResultadosDashboard() {
+      try {
+        const cohorteNormalizada =
+          selectedCohort
             .replace(/\s+/g, "")
-            .toUpperCase() ===
-          cohorteNormalizada,
-      );
+            .toUpperCase();
 
-      setIndicators((actuales) =>
-        actuales.map((indicator) => {
-          if (indicator.id !== "I5") {
-            return indicator;
-          }
+        const evaluacion =
+          await obtenerEvaluacion(
+            carreraActual.code,
+            cohorteNormalizada,
+          );
 
-          if (!registroActual) {
-            return {
-              ...indicator,
-              cohorts: [],
-            };
-          }
+        const [
+          datosTitulacion,
+          datosDesercion,
+        ] = await Promise.all([
+          obtenerDatosTasa(
+            evaluacion.id_evaluacion,
+          ),
+          obtenerDatosDesercion(
+            evaluacion.id_evaluacion,
+          ),
+        ]);
 
-          return {
-            ...indicator,
-            cohorts: [
-              {
-                period: selectedCohort,
-                enrolled:
-                  Number(
-                    registroActual.matriculados,
-                  ) || 0,
-                graduated:
-                  Number(
-                    registroActual.graduados,
-                  ) || 0,
-              },
-            ],
-          };
-        }),
-      );
-    } catch (error) {
-      console.error(
-        "No se pudo cargar el resultado del indicador I5:",
-        error,
-      );
+        if (cancelado) {
+          return;
+        }
 
-      if (!cancelado) {
+        const registroTitulacion =
+          datosTitulacion.find(
+            (dato) =>
+              dato.cohorte
+                .replace(/\s+/g, "")
+                .toUpperCase() ===
+              cohorteNormalizada,
+          );
+
+        const registroDesercion =
+          datosDesercion.find(
+            (dato) =>
+              dato.cohorte
+                .replace(/\s+/g, "")
+                .toUpperCase() ===
+              cohorteNormalizada,
+          );
+
         setIndicators((actuales) =>
-          actuales.map((indicator) =>
-            indicator.id === "I5"
-              ? {
+          actuales.map((indicator) => {
+            if (indicator.id === "I5") {
+              if (!registroTitulacion) {
+                return {
                   ...indicator,
                   cohorts: [],
-                }
-              : indicator,
-          ),
+                };
+              }
+
+              return {
+                ...indicator,
+                cohorts: [
+                  {
+                    period: selectedCohort,
+                    enrolled:
+                      Number(
+                        registroTitulacion.matriculados,
+                      ) || 0,
+                    graduated:
+                      Number(
+                        registroTitulacion.graduados,
+                      ) || 0,
+                  },
+                ],
+              };
+            }
+
+            if (indicator.id === "I4") {
+              if (
+                !registroDesercion ||
+                registroDesercion.iniciaron_primer_nivel === null ||
+                registroDesercion.no_continuaron === null
+              ) {
+                return {
+                  ...indicator,
+                  cohorts: [],
+                };
+              }
+
+              /*
+               * calcRate() calcula:
+               * graduated / enrolled × 100
+               *
+               * Para I4 se reutilizan esos campos así:
+               * enrolled   = iniciaron en primer nivel
+               * graduated  = no continuaron
+               */
+              return {
+                ...indicator,
+                cohorts: [
+                  {
+                    period: selectedCohort,
+                    enrolled:
+                      Number(
+                        registroDesercion.iniciaron_primer_nivel,
+                      ) || 0,
+                    graduated:
+                      Number(
+                        registroDesercion.no_continuaron,
+                      ) || 0,
+                  },
+                ],
+              };
+            }
+
+            return indicator;
+          }),
         );
+      } catch (error) {
+        console.error(
+          "No se pudieron cargar los resultados del dashboard:",
+          error,
+        );
+
+        if (!cancelado) {
+          setIndicators((actuales) =>
+            actuales.map((indicator) =>
+              indicator.id === "I4" ||
+              indicator.id === "I5"
+                ? {
+                    ...indicator,
+                    cohorts: [],
+                  }
+                : indicator,
+            ),
+          );
+        }
       }
     }
-  }
 
-  void cargarResultadoTitulacion();
+    void cargarResultadosDashboard();
 
-  return () => {
-    cancelado = true;
-  };
-}, [
-  view,
-  career,
-  selectedCohort,
-]);
+    return () => {
+      cancelado = true;
+    };
+  }, [
+    view,
+    career,
+    selectedCohort,
+  ]);
 
   function selectCareer(
     selectedCareer: Career,

@@ -590,3 +590,182 @@ export async function guardarDatoTitulacion({
 
   return datos.datos;
 }
+
+//Tasa de Deserción
+export type TipoDatoDesercion =
+  | "primer_nivel"
+  | "segundo_anio"
+  | "no_continuaron";
+
+export interface LecturaPdfDesercion {
+  tipo_dato: TipoDatoDesercion;
+  total: number;
+  metodo:
+    | "total_reportado"
+    | "identificaciones_unicas";
+  cohorte_detectada: string | null;
+  periodo_detectado: string | null;
+  identificaciones_detectadas: number;
+}
+
+interface LeerPdfDesercionResponse {
+  ok: boolean;
+  mensaje: string;
+  datos?: LecturaPdfDesercion;
+}
+
+export async function leerPdfDesercion(
+  archivo: File,
+  tipoDato: TipoDatoDesercion,
+): Promise<LecturaPdfDesercion> {
+  const formulario = new FormData();
+
+  formulario.append("archivo", archivo);
+  formulario.append("tipo_dato", tipoDato);
+
+  const respuesta = await fetch(
+    "http://localhost/sistemacaces/api/tasa_desercion/leer_pdf.php",
+    {
+      method: "POST",
+      credentials: "include",
+      body: formulario,
+    },
+  );
+
+  const datos =
+    (await respuesta.json()) as LeerPdfDesercionResponse;
+
+  if (
+    !respuesta.ok ||
+    !datos.ok ||
+    !datos.datos
+  ) {
+    throw new Error(
+      datos.mensaje ||
+        "No se pudo leer el PDF de deserción.",
+    );
+  }
+
+  return datos.datos;
+}
+
+interface GuardarDatoDesercionParams {
+  idEvaluacion: number;
+  cohorte: string;
+  iniciaronPrimerNivel?: number;
+  matriculadosSegundoAnio?: number;
+  noContinuaron?: number;
+}
+
+export interface DatoDesercionGuardado {
+  id_evaluacion: number;
+  cohorte: string;
+  iniciaron_primer_nivel: number | null;
+  matriculados_segundo_anio: number | null;
+  no_continuaron: number | null;
+  tasa: number | null;
+}
+
+interface GuardarDatoDesercionResponse {
+  ok: boolean;
+  mensaje: string;
+  advertencia?: string | null;
+  datos?: DatoDesercionGuardado;
+}
+
+export async function guardarDatoDesercion({
+  idEvaluacion,
+  cohorte,
+  iniciaronPrimerNivel,
+  matriculadosSegundoAnio,
+  noContinuaron,
+}: GuardarDatoDesercionParams): Promise<DatoDesercionGuardado> {
+  const cuerpo: Record<string, string | number> = {
+    id_evaluacion: idEvaluacion,
+    cohorte,
+  };
+
+  if (iniciaronPrimerNivel !== undefined) {
+    cuerpo.iniciaron_primer_nivel =
+      iniciaronPrimerNivel;
+  }
+
+  if (matriculadosSegundoAnio !== undefined) {
+    cuerpo.matriculados_segundo_anio =
+      matriculadosSegundoAnio;
+  }
+
+  if (noContinuaron !== undefined) {
+    cuerpo.no_continuaron = noContinuaron;
+  }
+
+  const respuesta = await fetch(
+    "http://localhost/sistemacaces/api/tasa_desercion/guardar.php",
+    {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify(cuerpo),
+    },
+  );
+
+  const datos =
+    (await respuesta.json()) as GuardarDatoDesercionResponse;
+
+  if (
+    !respuesta.ok ||
+    !datos.ok ||
+    !datos.datos
+  ) {
+    throw new Error(
+      datos.mensaje ||
+        "No se pudo guardar el cálculo de deserción.",
+    );
+  }
+
+  return datos.datos;
+}
+
+export interface CohorteDesercion {
+  cohorte: string;
+  iniciaron_primer_nivel: number | null;
+  matriculados_segundo_anio: number | null;
+  no_continuaron: number | null;
+  tasa: number | null;
+}
+
+interface ObtenerDatosDesercionResponse {
+  ok: boolean;
+  mensaje?: string;
+  datos?: CohorteDesercion[];
+}
+
+export async function obtenerDatosDesercion(
+  idEvaluacion: number,
+): Promise<CohorteDesercion[]> {
+  const respuesta = await fetch(
+    `http://localhost/sistemacaces/api/tasa_desercion/obtener.php?id_evaluacion=${idEvaluacion}`,
+    {
+      method: "GET",
+      credentials: "include",
+      headers: {
+        Accept: "application/json",
+      },
+    },
+  );
+
+  const datos =
+    (await respuesta.json()) as ObtenerDatosDesercionResponse;
+
+  if (!respuesta.ok || !datos.ok) {
+    throw new Error(
+      datos.mensaje ||
+        "No se pudieron consultar los datos de deserción.",
+    );
+  }
+
+  return datos.datos ?? [];
+}
