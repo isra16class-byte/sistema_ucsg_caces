@@ -81,6 +81,14 @@ function makeIndicators(
           sourceNum: 3,
           label: "Actas de revisión",
         },
+        {
+          sourceNum: 4,
+          label: "Acta de Ajuste Curricular (EF2)",
+        },
+        {
+          sourceNum: 5,
+          label: "Evidencia de Difusión (EF3)",
+        },
       ],
     },
     {

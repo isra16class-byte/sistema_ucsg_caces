@@ -18,6 +18,7 @@ import {
   TableProperties,
   CheckCircle2,
   Upload,
+  Loader2,
 } from "lucide-react";
 
 import { toast } from "sonner";
@@ -38,13 +39,18 @@ import {
 } from "../utils/evaluation";
 
 import {
-  ASIGNATURAS_BY_PAO,
-  EF_DEFS,
   I3_EF_DEFS,
   I3_MATERIAS_BY_PAO,
   i3MateriaScore,
   i3PaoScore,
 } from "../data/evaluation";
+
+import {
+  obtenerPeriodos,
+  obtenerResultadoCohorte,
+  type ResultadoAsignatura,
+  type ResultadoCohorte,
+} from "../services/seguimientoSyllabus";
 
 import type {
   Career,
@@ -131,25 +137,86 @@ export default function IndicatorView({ indicator, onBack, career, cohort, pao, 
   );
 }
 
+// Metadatos de presentación de cada EF (label/color) -- los VALORES salen
+// de la API real (obtenerResultadoCohorte → detalle_asignaturas).
+const EF_META = [
+  { id: "EF1", key: "ef1" as const, label: "Seguimiento contenidos", color: "#2563EB" },
+  { id: "EF2", key: "ef2" as const, label: "Mejora micro currículo", color: "#16A34A" },
+  { id: "EF3", key: "ef3" as const, label: "Proceso difundido", color: "#0891B2" },
+  { id: "EF4", key: "ef4" as const, label: "Percepción estudiantil", color: "#D97706" },
+  { id: "EF5", key: "ef5" as const, label: "Marco normativo", color: "#7C3AED" },
+];
+
 // ── Tab Resultados (I2 – Seguimiento de Syllabus) ──────────────────────────
+// Solo lectura: la carga/reemplazo de evidencia se hace en la pestaña
+// "Evidencias" (mecanismo genérico de slots), no aquí.
 function TabResults({ ind, career, cohort, pao }: { ind: IndicatorDef; career: Career | null; cohort: string; pao: number }) {
+  const [cargando, setCargando] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [resultadoCohorte, setResultadoCohorte] = useState<ResultadoCohorte | null>(null);
   const [selectedAsig, setSelectedAsig] = useState(0);
-  const paoKey = `PAO ${pao}`;
-  const asignaturas = ASIGNATURAS_BY_PAO[paoKey] ?? [];
-  const asig = asignaturas[Math.min(selectedAsig, asignaturas.length - 1)] ?? asignaturas[0];
 
-  const efScores = EF_DEFS.map((ef, i) => ({
+  const detalle = resultadoCohorte?.detalle_asignaturas ?? [];
+  const asig: ResultadoAsignatura | undefined = detalle[Math.min(selectedAsig, detalle.length - 1)];
+
+  // Resuelve evaluación (id_evaluacion, id_cohorte), el PAO real, y trae
+  // de una sola llamada el resultado EF1-EF5 de todas las asignaturas de ese PAO.
+  useEffect(() => {
+    if (!career) return;
+    let cancelado = false;
+    setCargando(true);
+    setError(null);
+
+    (async () => {
+      try {
+        const evaluacion = await obtenerEvaluacion(career.code, cohort);
+        const periodos = await obtenerPeriodos(evaluacion.id_cohorte);
+        const periodo = periodos.find((p) => p.orden === pao);
+        if (!periodo) {
+          throw new Error(`No existe el PAO ${pao} para esta cohorte.`);
+        }
+        const rc = await obtenerResultadoCohorte(evaluacion.id_cohorte, evaluacion.id_evaluacion, periodo.id_periodoacademico);
+        if (cancelado) return;
+        setResultadoCohorte(rc);
+        setSelectedAsig(0);
+      } catch (e) {
+        if (!cancelado) setError(e instanceof Error ? e.message : "No se pudo cargar la información.");
+      } finally {
+        if (!cancelado) setCargando(false);
+      }
+    })();
+
+    return () => { cancelado = true; };
+  }, [career, cohort, pao]);
+
+  if (cargando) {
+    return (
+      <div className="h-full flex items-center justify-center gap-2" style={{ color: "#5A7295" }}>
+        <Loader2 size={16} className="animate-spin" /> Cargando resultados reales…
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center gap-2" style={{ color: "#DC2626" }}>
+        <AlertCircle size={20} />
+        <p className="text-sm font-medium">{error}</p>
+      </div>
+    );
+  }
+
+  const efScores = EF_META.map((ef) => ({
     ...ef,
-    raw: asig?.ef[i] ?? 0,
-    pct: Math.round((asig?.ef[i] ?? 0) * 100),
+    pct: asig?.[ef.key] ?? null,
   }));
-  const total = efScores.reduce((s, ef) => s + ef.raw * ef.weight, 0);
-  const radarData = efScores.map((ef) => ({ subject: ef.id, score: ef.pct, fullMark: 100 }));
-
+  const total = asig?.valoracion_general ?? null;
+  const radarData = efScores.map((ef) => ({ subject: ef.id, score: ef.pct ?? 0, fullMark: 100 }));
 
   // EF cells – label as title, id as subtitle, percentage only
   function EfCell({ ef }: { ef: typeof efScores[0] }) {
-    const bc = ef.pct >= 75 ? "#16A34A" : ef.pct >= 50 ? "#CA8A04" : "#DC2626";
+    const pct = ef.pct;
+    const bc = pct === null ? "#9CA3AF" : pct >= 75 ? "#16A34A" : pct >= 50 ? "#CA8A04" : "#DC2626";
     return (
       <div className="rounded-xl p-2.5" style={{ background: "#F8FAFD", border: "1px solid rgba(27,58,107,0.07)" }}>
         <div className="flex items-center justify-between mb-1">
@@ -158,11 +225,11 @@ function TabResults({ ind, career, cohort, pao }: { ind: IndicatorDef; career: C
             <p style={{ color: ef.color, fontFamily: "'DM Mono',monospace", fontSize: 9 }}>{ef.id}</p>
           </div>
           <span className="font-bold" style={{ color: bc, fontFamily: "'DM Mono',monospace", fontSize: 13 }}>
-            {ef.pct}%
+            {pct === null ? "—" : `${pct}%`}
           </span>
         </div>
         <div className="h-1 rounded-full overflow-hidden" style={{ background: "#E5E7EB" }}>
-          <div className="h-full rounded-full transition-all duration-500" style={{ width: `${ef.pct}%`, background: bc }} />
+          <div className="h-full rounded-full transition-all duration-500" style={{ width: `${pct ?? 0}%`, background: bc }} />
         </div>
       </div>
     );
@@ -176,8 +243,7 @@ function TabResults({ ind, career, cohort, pao }: { ind: IndicatorDef; career: C
 
         {/* Career/Cohort/PAO card with Valoración General */}
         {(() => {
-          const asigPct = Math.round(total * 100);
-          const st = getStatus(asigPct);
+          const st = getStatus(total ?? 0);
           return (
             <div className="flex-shrink-0 bg-white rounded-2xl px-4 py-3 flex items-center justify-between gap-3"
               style={{ border: "1px solid rgba(27,58,107,0.08)" }}>
@@ -187,9 +253,13 @@ function TabResults({ ind, career, cohort, pao }: { ind: IndicatorDef; career: C
               </div>
               <div className="text-right flex-shrink-0">
                 <p className="text-xs font-bold uppercase tracking-widest mb-0.5" style={{ color: "#5A7295" }}>Valoración General</p>
-                <p className="text-2xl font-bold leading-none" style={{ color: st.color, fontFamily: "'DM Mono',monospace" }}>{asigPct}%</p>
-                <p className="text-xs mt-0.5 font-semibold px-2 py-0.5 rounded-full inline-block"
-                  style={{ background: st.bg, color: st.color }}>{st.label}</p>
+                <p className="text-2xl font-bold leading-none" style={{ color: total === null ? "#9CA3AF" : st.color, fontFamily: "'DM Mono',monospace" }}>
+                  {total === null ? "—" : `${total}%`}
+                </p>
+                {total !== null && (
+                  <p className="text-xs mt-0.5 font-semibold px-2 py-0.5 rounded-full inline-block"
+                    style={{ background: st.bg, color: st.color }}>{st.label}</p>
+                )}
               </div>
             </div>
           );
@@ -202,24 +272,27 @@ function TabResults({ ind, career, cohort, pao }: { ind: IndicatorDef; career: C
             <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "#5A7295" }}>Asignaturas</p>
           </div>
           <div className="flex flex-col flex-1 overflow-auto">
-            {asignaturas.map((a, ai) => {
+            {detalle.map((d, ai) => {
               const active = selectedAsig === ai;
-              const subTotal = EF_DEFS.reduce((s, ef, i) => s + a.ef[i] * ef.weight, 0);
-              const subSt = getStatus(Math.round(subTotal * 100));
+              const subTotal = d.valoracion_general;
+              const subSt = getStatus(subTotal ?? 0);
               return (
-                <button key={a.name} onClick={() => setSelectedAsig(ai)}
+                <button key={d.id_asignatura} onClick={() => setSelectedAsig(ai)}
                   className="flex-shrink-0 w-full text-left px-3 flex items-center justify-between gap-2 transition-colors hover:bg-blue-50"
                   style={{ height: 36, borderBottom: "1px solid rgba(27,58,107,0.05)", background: active ? "#EEF5FF" : "transparent", borderLeft: `3px solid ${active ? "#1B3A6B" : "transparent"}` }}>
                   <div className="flex items-center gap-1.5 min-w-0">
-                    <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: subSt.color }} />
-                    <p className="text-xs font-semibold truncate" style={{ color: active ? "#1B3A6B" : "#0F1E3C" }}>{a.name}</p>
+                    <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: subTotal === null ? "#9CA3AF" : subSt.color }} />
+                    <p className="text-xs font-semibold truncate" style={{ color: active ? "#1B3A6B" : "#0F1E3C" }}>{d.nombre_asignatura}</p>
                   </div>
-                  <span className="text-xs font-bold flex-shrink-0" style={{ color: subSt.color, fontFamily: "'DM Mono',monospace" }}>
-                    {subTotal > 0 ? `${Math.round(subTotal * 100)}%` : "—"}
+                  <span className="text-xs font-bold flex-shrink-0" style={{ color: subTotal === null ? "#9CA3AF" : subSt.color, fontFamily: "'DM Mono',monospace" }}>
+                    {subTotal === null ? "—" : `${subTotal}%`}
                   </span>
                 </button>
               );
             })}
+            {detalle.length === 0 && (
+              <p className="text-xs px-3 py-3" style={{ color: "#94A3B8" }}>No hay asignaturas cargadas para este PAO.</p>
+            )}
           </div>
         </div>
       </div>
@@ -232,12 +305,12 @@ function TabResults({ ind, career, cohort, pao }: { ind: IndicatorDef; career: C
         <div className="flex items-center justify-between px-5 py-2.5 flex-shrink-0"
           style={{ borderBottom: "1px solid rgba(27,58,107,0.07)", background: "#F8FAFD" }}>
           <div>
-            <h3 className="font-bold" style={{ fontFamily: "'Libre Baskerville',serif", color: "#0F1E3C", fontSize: 13 }}>{asig.name}</h3>
+            <h3 className="font-bold" style={{ fontFamily: "'Libre Baskerville',serif", color: "#0F1E3C", fontSize: 13 }}>{asig?.nombre_asignatura ?? "—"}</h3>
           </div>
-          {(() => { const st = getStatus(Math.round(total * 100)); return (
+          {(() => { const st = getStatus(total ?? 0); return (
             <span className="px-2.5 py-1 rounded-lg font-bold flex-shrink-0"
-              style={{ background: st.bg, color: st.color, fontFamily: "'DM Mono',monospace", fontSize: 13 }}>
-              {total > 0 ? `${Math.round(total * 100)}%` : "Sin datos"}
+              style={{ background: total === null ? "#F1F5F9" : st.bg, color: total === null ? "#94A3B8" : st.color, fontFamily: "'DM Mono',monospace", fontSize: 13 }}>
+              {total === null ? "Sin datos" : `${total}%`}
             </span>
           ); })()}
         </div>
@@ -270,7 +343,7 @@ function TabResults({ ind, career, cohort, pao }: { ind: IndicatorDef; career: C
           <div className="flex items-center gap-1.5 flex-shrink-0 mt-0.5">
             <AlertCircle size={10} style={{ color: "#94A3B8", flexShrink: 0 }} />
             <p style={{ color: "#94A3B8", fontSize: 10 }}>
-              Calculado automáticamente desde Google Forms · EF1, EF3, EF4 y EF5.
+              EF1 y EF4 calculados en vivo desde Google Forms ({asig?.respuestas ?? 0} respuestas) · EF2, EF3, EF5 desde evidencia subida en la pestaña Evidencias.
             </p>
           </div>
         </div>
@@ -279,7 +352,7 @@ function TabResults({ ind, career, cohort, pao }: { ind: IndicatorDef; career: C
         <div className="flex justify-end px-4 py-2.5 flex-shrink-0"
           style={{ borderTop: "1px solid rgba(27,58,107,0.07)" }}>
           <button
-            onClick={() => toast.success(`Exportando "${asig.name}" a PDF…`, { description: "El reporte se descargará en breve." })}
+            onClick={() => toast.success(`Exportando "${asig?.nombre_asignatura ?? ""}" a PDF…`, { description: "El reporte se descargará en breve." })}
             className="flex items-center gap-1.5 px-4 py-2 rounded-xl font-bold transition-all hover:opacity-90 active:scale-95"
             style={{ background: "#1B3A6B", color: "#fff", fontSize: 12 }}>
             <Download size={12} /> Exportar PDF
