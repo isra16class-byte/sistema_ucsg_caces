@@ -198,6 +198,251 @@ export default function EvidenceUploadView({ career, indicators, onChange, onBac
   };
 }, [indicatorId, cohort]);
 
+// Mismo mecanismo de I5, generalizado a I1/I2: trae el catálogo real
+// (Catalogo_Evidencias) para el indicador y lo mezcla en los slots
+// existentes por `orden` -> `sourceNum`. A diferencia del efecto de I5,
+// este NO reemplaza el arreglo de slots completo: si un slot no tiene fila
+// de catálogo correspondiente (p. ej. "Asignaturas" en I1, que no es una
+// evidencia subible), se deja intacto tal como está en App.tsx.
+const ID_INDICADOR_NUM: Record<string, number> = {
+  I1: 1,
+  I2: 2,
+  I3: 3,
+  I4: 4,
+  I5: 5,
+};
+
+useEffect(() => {
+  if (!["I1", "I2"].includes(indicatorId) || !cohort) {
+    return;
+  }
+
+  const idIndicadorReal = ID_INDICADOR_NUM[indicatorId];
+
+  let activo = true;
+
+  async function cargarCatalogoPropio() {
+    setLoadingCatalogo(true);
+    setCatalogoError("");
+
+    try {
+      const [catalogo, evaluacion] = await Promise.all([
+        obtenerCatalogoEvidencias(idIndicadorReal),
+        obtenerEvaluacion(
+          career.code,
+          cohort.replace(/\s+/g, ""),
+        ),
+      ]);
+
+      const guardadas = await obtenerEvidenciasGuardadas(
+        evaluacion.id_evaluacion,
+        idIndicadorReal,
+      );
+
+      if (!activo) {
+        return;
+      }
+
+      onChange(
+        indicators.map((ind) => {
+          if (ind.id !== indicatorId) {
+            return ind;
+          }
+
+          return {
+            ...ind,
+            slots: ind.slots.map((slot) => {
+              // El slot 1 de I2 ("Syllabus") no se llena desde el catálogo
+              // propio de I2 -- lo llena el efecto de más abajo, que trae
+              // el Syllabus compartido desde I1. El catálogo propio de I2
+              // sí tiene una fila con orden=1 (DOC.SEG.01, Reglamento/
+              // Normativa, EF5), pero esa fila no tiene tile en el wizard
+              // todavía, así que no debe pisar el slot 1.
+              if (indicatorId === "I2" && slot.sourceNum === 1) {
+                return slot;
+              }
+
+              const evidencia = catalogo.find(
+                (item) => item.orden === slot.sourceNum,
+              );
+
+              if (!evidencia) {
+                // No hay fila de catálogo para este slot (p. ej.
+                // "Asignaturas" en I1, o un slot que llega de otra fuente
+                // como el compartido). Se deja tal como está.
+                return slot;
+              }
+
+              const guardada = guardadas.find(
+                (item) =>
+                  item.id_catalogo === evidencia.id_catalogo ||
+                  item.codigo_evidencia === evidencia.codigo_evidencia,
+              );
+
+              return {
+                ...slot,
+                label: evidencia.titulo_corto || slot.label,
+                idCatalogo: evidencia.id_catalogo,
+                codigoEvidencia: evidencia.codigo_evidencia,
+                nombreArchivoBase: evidencia.nombre_archivo_base,
+                descripcionCompleta: evidencia.descripcion,
+
+                idEvidencia:
+                  guardada?.id_evidencia ?? slot.idEvidencia,
+
+                file: guardada
+                  ? {
+                      fileName: guardada.nombre_archivo,
+                      originalName: guardada.nombre_archivo,
+                      url: guardada.url_archivo,
+                      serverUrl: guardada.url_archivo,
+                      size: 0,
+                    }
+                  : slot.file,
+              };
+            }),
+          };
+        }),
+      );
+    } catch (error) {
+      if (!activo) {
+        return;
+      }
+
+      setCatalogoError(
+        error instanceof Error
+          ? error.message
+          : "No se pudo cargar el catálogo de evidencias.",
+      );
+    } finally {
+      if (activo) {
+        setLoadingCatalogo(false);
+      }
+    }
+  }
+
+  cargarCatalogoPropio();
+
+  return () => {
+    activo = false;
+  };
+}, [indicatorId, cohort]);
+
+// I2 recibe compartido el "Syllabus" (DOC.SYL.02) que se sube desde I1 —
+// mismo patrón ya probado que usa I4 para recibir DOC.TIT.02 desde I5.
+// Va en el slot sourceNum 1 ("Syllabus"), que queda de solo lectura
+// (sharedFrom) cuando el archivo ya se subió desde I1.
+useEffect(() => {
+  if (indicatorId !== "I2" || !cohort) {
+    return;
+  }
+
+  let activo = true;
+
+  async function cargarSyllabusCompartidoDesdeI1() {
+    setLoadingCatalogo(true);
+    setCatalogoError("");
+
+    try {
+      const [catalogoI1, evaluacion] = await Promise.all([
+        obtenerCatalogoEvidencias(1),
+        obtenerEvaluacion(
+          career.code,
+          cohort.replace(/\s+/g, ""),
+        ),
+      ]);
+
+      // Metadata base del catálogo (existe siempre, aunque nadie haya
+      // subido el archivo todavía) -- esto es lo que permite que I2 pueda
+      // subir el Syllabus directamente si aún no se subió desde I1.
+      const syllabusCatalogo = catalogoI1.find(
+        (item) => item.codigo_evidencia === "DOC.SYL.02",
+      );
+
+      if (!syllabusCatalogo) {
+        return;
+      }
+
+      const compartidas = await obtenerEvidenciasCompartidas(
+        evaluacion.id_evaluacion,
+        2,
+      );
+
+      if (!activo) {
+        return;
+      }
+
+      // Si ya se subió (desde I1 o antes desde I2), esto trae el archivo
+      // real guardado; si no, queda undefined y el slot solo tendrá los
+      // datos de catálogo (sin archivo todavía).
+      const syllabusCompartido = compartidas.find(
+        (evidencia) => evidencia.codigo_evidencia === "DOC.SYL.02",
+      );
+
+      onChange(
+        indicators.map((ind) => {
+          if (ind.id !== "I2") {
+            return ind;
+          }
+
+          return {
+            ...ind,
+            slots: ind.slots.map((slot) => {
+              if (slot.sourceNum !== 1) {
+                return slot;
+              }
+
+              return {
+                ...slot,
+                label: syllabusCatalogo.titulo_corto || slot.label,
+                idCatalogo: syllabusCatalogo.id_catalogo,
+                codigoEvidencia: syllabusCatalogo.codigo_evidencia,
+                nombreArchivoBase: syllabusCatalogo.nombre_archivo_base,
+                descripcionCompleta: syllabusCatalogo.descripcion,
+
+                idEvidencia:
+                  syllabusCompartido?.id_evidencia ?? slot.idEvidencia,
+                sharedFrom:
+                  syllabusCompartido?.indicador_origen ?? slot.sharedFrom,
+
+                file: syllabusCompartido
+                  ? {
+                      fileName: syllabusCompartido.nombre_archivo,
+                      originalName: syllabusCompartido.nombre_archivo,
+                      url: syllabusCompartido.url_archivo,
+                      serverUrl: syllabusCompartido.url_archivo,
+                      size: 0,
+                    }
+                  : slot.file,
+              };
+            }),
+          };
+        }),
+      );
+    } catch (error) {
+      if (!activo) {
+        return;
+      }
+
+      setCatalogoError(
+        error instanceof Error
+          ? error.message
+          : "No se pudo cargar el syllabus compartido desde I1.",
+      );
+    } finally {
+      if (activo) {
+        setLoadingCatalogo(false);
+      }
+    }
+  }
+
+  cargarSyllabusCompartidoDesdeI1();
+
+  return () => {
+    activo = false;
+  };
+}, [indicatorId, cohort]);
+
 useEffect(() => {
   if (indicatorId !== "I4" || !cohort) {
     return;

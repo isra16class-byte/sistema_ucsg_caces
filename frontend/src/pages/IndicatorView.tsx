@@ -902,6 +902,28 @@ if (
       evidencia.codigo_evidencia ===
       "DOC.TIT.01",
   );
+} else if (
+  ind.id === "I2" &&
+  slot.sourceNum === 1
+) {
+  /*
+   * El slot 1 de I2 ("Syllabus") es compartido desde I1
+   * (DOC.SYL.02). No se puede emparejar por `orden` porque
+   * I2 también tiene su propia fila de catálogo con orden=1
+   * (DOC.SEG.01, Reglamento/Normativa institucional, EF5),
+   * que todavía no tiene slot visible en el wizard.
+   */
+  propia = guardadas.find(
+    (evidencia) =>
+      evidencia.codigo_evidencia ===
+      "DOC.SYL.02",
+  );
+
+  compartida = compartidas.find(
+    (evidencia) =>
+      evidencia.codigo_evidencia ===
+      "DOC.SYL.02",
+  );
 } else {
   propia = guardadas.find(
     (evidencia) =>
