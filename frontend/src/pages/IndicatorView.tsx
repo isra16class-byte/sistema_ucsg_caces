@@ -206,11 +206,12 @@ function TabResults({ ind, career, cohort, pao }: { ind: IndicatorDef; career: C
     );
   }
 
-  const efScores = EF_META.map((ef) => ({
+    const efScores = EF_META.map((ef) => ({
     ...ef,
     pct: asig?.[ef.key] ?? null,
   }));
-  const total = asig?.valoracion_general ?? null;
+  const totalGeneral = resultadoCohorte?.valoracion_general ?? null;
+  const totalAsignatura = asig?.valoracion_general ?? null;
   const radarData = efScores.map((ef) => ({ subject: ef.id, score: ef.pct ?? 0, fullMark: 100 }));
 
   // EF cells – label as title, id as subtitle, percentage only
@@ -241,9 +242,9 @@ function TabResults({ ind, career, cohort, pao }: { ind: IndicatorDef; career: C
       {/* ── LEFT 50%: subject card + list ─────────────────────────── */}
       <div className="flex-1 flex flex-col gap-3 min-h-0 min-w-0">
 
-        {/* Career/Cohort/PAO card with Valoración General */}
+                {/* Career/Cohort/PAO card with Valoración General (agregado del PAO) */}
         {(() => {
-          const st = getStatus(total ?? 0);
+          const st = getStatus(totalGeneral ?? 0);
           return (
             <div className="flex-shrink-0 bg-white rounded-2xl px-4 py-3 flex items-center justify-between gap-3"
               style={{ border: "1px solid rgba(27,58,107,0.08)" }}>
@@ -253,10 +254,10 @@ function TabResults({ ind, career, cohort, pao }: { ind: IndicatorDef; career: C
               </div>
               <div className="text-right flex-shrink-0">
                 <p className="text-xs font-bold uppercase tracking-widest mb-0.5" style={{ color: "#5A7295" }}>Valoración General</p>
-                <p className="text-2xl font-bold leading-none" style={{ color: total === null ? "#9CA3AF" : st.color, fontFamily: "'DM Mono',monospace" }}>
-                  {total === null ? "—" : `${total}%`}
+                <p className="text-2xl font-bold leading-none" style={{ color: totalGeneral === null ? "#9CA3AF" : st.color, fontFamily: "'DM Mono',monospace" }}>
+                  {totalGeneral === null ? "—" : `${totalGeneral}%`}
                 </p>
-                {total !== null && (
+                {totalGeneral !== null && (
                   <p className="text-xs mt-0.5 font-semibold px-2 py-0.5 rounded-full inline-block"
                     style={{ background: st.bg, color: st.color }}>{st.label}</p>
                 )}
@@ -307,10 +308,10 @@ function TabResults({ ind, career, cohort, pao }: { ind: IndicatorDef; career: C
           <div>
             <h3 className="font-bold" style={{ fontFamily: "'Libre Baskerville',serif", color: "#0F1E3C", fontSize: 13 }}>{asig?.nombre_asignatura ?? "—"}</h3>
           </div>
-          {(() => { const st = getStatus(total ?? 0); return (
+                    {(() => { const st = getStatus(totalAsignatura ?? 0); return (
             <span className="px-2.5 py-1 rounded-lg font-bold flex-shrink-0"
-              style={{ background: total === null ? "#F1F5F9" : st.bg, color: total === null ? "#94A3B8" : st.color, fontFamily: "'DM Mono',monospace", fontSize: 13 }}>
-              {total === null ? "Sin datos" : `${total}%`}
+              style={{ background: totalAsignatura === null ? "#F1F5F9" : st.bg, color: totalAsignatura === null ? "#94A3B8" : st.color, fontFamily: "'DM Mono',monospace", fontSize: 13 }}>
+              {totalAsignatura === null ? "Sin datos" : `${totalAsignatura}%`}
             </span>
           ); })()}
         </div>
