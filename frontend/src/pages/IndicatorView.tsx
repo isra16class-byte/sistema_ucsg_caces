@@ -790,60 +790,99 @@ function TabEvidences({
         }
 
         const nuevasSlots = ind.slots.map((slot) => {
-        
           let propia;
-let compartida;
+          let compartida;
 
-/*
- * En Tasa de Titulación el orden visual es:
- * 1 = Matriculados  -> DOC.TIT.02
- * 2 = Graduados     -> DOC.TIT.01
- */
-if (
-  ind.id === "I5" &&
-  slot.sourceNum === 1
-) {
-  propia = guardadas.find(
-    (evidencia) =>
-      evidencia.codigo_evidencia ===
-      "DOC.TIT.02",
-  );
+          /*
+           * I5 - Tasa de Titulación:
+           * 1 = Matriculados de primer nivel -> DOC.TIT.02
+           * 2 = Graduados                    -> DOC.TIT.01
+           *
+           * I4 - Tasa de Deserción:
+           * 1 = Matriculados de primer nivel comparte DOC.TIT.02
+           * 2 = Matriculados de segundo nivel conserva su evidencia propia
+           * 3 = Estudiantes desertados conserva su evidencia propia
+           */
+          if (
+            ind.id === "I5" &&
+            slot.sourceNum === 1
+          ) {
+            propia = guardadas.find(
+              (evidencia) =>
+                evidencia.codigo_evidencia ===
+                "DOC.TIT.02",
+            );
 
-  compartida = compartidas.find(
-    (evidencia) =>
-      evidencia.codigo_evidencia ===
-      "DOC.TIT.02",
-  );
-} else if (
-  ind.id === "I5" &&
-  slot.sourceNum === 2
-) {
-  propia = guardadas.find(
-    (evidencia) =>
-      evidencia.codigo_evidencia ===
-      "DOC.TIT.01",
-  );
+            compartida = compartidas.find(
+              (evidencia) =>
+                evidencia.codigo_evidencia ===
+                "DOC.TIT.02",
+            );
+          } else if (
+            ind.id === "I5" &&
+            slot.sourceNum === 2
+          ) {
+            propia = guardadas.find(
+              (evidencia) =>
+                evidencia.codigo_evidencia ===
+                "DOC.TIT.01",
+            );
 
-  compartida = compartidas.find(
-    (evidencia) =>
-      evidencia.codigo_evidencia ===
-      "DOC.TIT.01",
-  );
-} else {
-  propia = guardadas.find(
-    (evidencia) =>
-      Number(evidencia.orden) ===
-      Number(slot.sourceNum),
-  );
+            compartida = compartidas.find(
+              (evidencia) =>
+                evidencia.codigo_evidencia ===
+                "DOC.TIT.01",
+            );
+          } else if (
+            ind.id === "I4" &&
+            slot.sourceNum === 1
+          ) {
+            propia = guardadas.find(
+              (evidencia) =>
+                evidencia.codigo_evidencia ===
+                "DOC.TIT.02",
+            );
 
-  compartida = compartidas.find(
-    (evidencia) =>
-      Number(evidencia.orden) ===
-      Number(slot.sourceNum),
-  );
-}
+            compartida = compartidas.find(
+              (evidencia) =>
+                evidencia.codigo_evidencia ===
+                "DOC.TIT.02",
+            );
+          } else if (
+            ind.id === "I4" &&
+            (slot.sourceNum === 2 ||
+              slot.sourceNum === 3)
+          ) {
+            /*
+             * I4:
+             * - segundo nivel;
+             * - estudiantes desertados.
+             *
+             * Estas evidencias NO se comparten con otros indicadores.
+             * Solo se consultan entre las evidencias propias de I4.
+             */
+            propia = guardadas.find(
+              (evidencia) =>
+                Number(evidencia.orden) ===
+                Number(slot.sourceNum),
+            );
 
-const evidencia = propia ?? compartida;
+            compartida = undefined;
+          } else {
+            propia = guardadas.find(
+              (evidencia) =>
+                Number(evidencia.orden) ===
+                Number(slot.sourceNum),
+            );
+
+            compartida = compartidas.find(
+              (evidencia) =>
+                Number(evidencia.orden) ===
+                Number(slot.sourceNum),
+            );
+          }
+
+          const evidencia = propia ?? compartida;
 
           if (!evidencia) {
             return {
