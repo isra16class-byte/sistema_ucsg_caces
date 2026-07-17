@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import {
   ArrowLeft,
@@ -15,11 +15,14 @@ import IndCard from "../app/components/IndCard";
 import PaoGroupCard from "../app/components/PaoGroupCard";
 import { COHORT_OPTIONS } from "../data/academic";
 
+import { obtenerEvaluacion } from "../services/evidencias";
+import {
+  obtenerPeriodos,
+  obtenerResultadoCohorte,
+} from "../services/seguimientoSyllabus";
+
 import type { UsuarioSesion } from "../services/auth";
-import type {
-  Career,
-  IndicatorDef,
-} from "../types";
+import type { Career, IndicatorDef } from "../types";
 
 interface DashboardViewProps {
   indicators: IndicatorDef[];
@@ -48,6 +51,69 @@ export default function DashboardView({
 }: DashboardViewProps) {
   const [cohortOpen, setCohortOpen] = useState(false);
 
+  // ── PAOs reales para I2 (Seguimiento de Syllabus) ──────────────────
+  const PAO_INICIAL = [
+    { pao: "PAO 1", pct: -1 },
+    { pao: "PAO 2", pct: -1 },
+    { pao: "PAO 3", pct: -1 },
+  ];
+  const [i2PaoScores, setI2PaoScores] = useState(PAO_INICIAL);
+
+  useEffect(() => {
+    let cancelado = false;
+
+    async function cargarPAOsReales() {
+      try {
+        const evaluacion = await obtenerEvaluacion(
+          career.code,
+          cohort.replace(/\s+/g, ""),
+        );
+
+        const periodos = await obtenerPeriodos(evaluacion.id_cohorte);
+
+        const resultados = await Promise.all(
+          [1, 2, 3].map(async (orden) => {
+            const periodo = periodos.find((p) => p.orden === orden);
+
+            if (!periodo) {
+              return { pao: `PAO ${orden}`, pct: -1 };
+            }
+
+            const resultado = await obtenerResultadoCohorte(
+              evaluacion.id_cohorte,
+              evaluacion.id_evaluacion,
+              periodo.id_periodoacademico,
+            );
+
+            return {
+              pao: `PAO ${orden}`,
+              pct: resultado?.valoracion_general ?? -1,
+            };
+          }),
+        );
+
+        if (cancelado) {
+          return;
+        }
+
+        setI2PaoScores(resultados);
+      } catch (error) {
+        if (cancelado) {
+          return;
+        }
+
+        console.error("Error al cargar PAOs reales para I2:", error);
+        setI2PaoScores(PAO_INICIAL);
+      }
+    }
+
+    void cargarPAOsReales();
+
+    return () => {
+      cancelado = true;
+    };
+  }, [career, cohort]);
+
   return (
     <div
       className="h-screen flex flex-col overflow-hidden"
@@ -72,10 +138,7 @@ export default function DashboardView({
             <ShieldCheck size={13} className="text-white" />
           </div>
 
-          <span
-            className="font-bold text-sm"
-            style={{ color: "#0F1E3C" }}
-          >
+          <span className="font-bold text-sm" style={{ color: "#0F1E3C" }}>
             CACES · UAFTT
           </span>
 
@@ -139,22 +202,13 @@ export default function DashboardView({
                     }}
                     className="w-full text-left px-4 py-2.5 text-xs font-semibold hover:bg-blue-50 transition-colors flex items-center justify-between"
                     style={{
-                      color:
-                        option === cohort
-                          ? "#1B3A6B"
-                          : "#374151",
-                      background:
-                        option === cohort
-                          ? "#EEF2F7"
-                          : "transparent",
+                      color: option === cohort ? "#1B3A6B" : "#374151",
+                      background: option === cohort ? "#EEF2F7" : "transparent",
                     }}
                   >
                     Cohorte {option}
                     {option === cohort && (
-                      <CheckCircle2
-                        size={12}
-                        style={{ color: "#1B3A6B" }}
-                      />
+                      <CheckCircle2 size={12} style={{ color: "#1B3A6B" }} />
                     )}
                   </button>
                 ))}
@@ -180,10 +234,7 @@ export default function DashboardView({
           <div className="hidden lg:flex items-center gap-2 px-2">
             <User size={12} style={{ color: "#5A7295" }} />
             <div className="leading-tight text-right">
-              <p
-                className="text-xs font-semibold"
-                style={{ color: "#0F1E3C" }}
-              >
+              <p className="text-xs font-semibold" style={{ color: "#0F1E3C" }}>
                 {usuario.nombres} {usuario.apellidos}
               </p>
               <p
@@ -241,16 +292,16 @@ export default function DashboardView({
       <div className="flex-1 min-h-0 px-6 pb-5 flex flex-col gap-3 overflow-hidden">
         <div className="flex gap-3 flex-1 min-h-0">
           <PaoGroupCard ind={indicators[0]} onClick={onSelect} />
-          <PaoGroupCard ind={indicators[1]} onClick={onSelect} />
+          <PaoGroupCard
+            ind={indicators[1]}
+            onClick={onSelect}
+            paosOverride={i2PaoScores}
+          />
         </div>
 
         <div className="flex gap-3 flex-1 min-h-0">
           <div className="h-full" style={{ flex: 2, minWidth: 0 }}>
-            <PaoGroupCard
-              ind={indicators[2]}
-              onClick={onSelect}
-              fullHeight
-            />
+            <PaoGroupCard ind={indicators[2]} onClick={onSelect} fullHeight />
           </div>
 
           <IndCard

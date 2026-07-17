@@ -10,15 +10,20 @@ interface PaoGroupCardProps {
   ind: IndicatorDef;
   onClick: (id: string, pao?: number) => void;
   fullHeight?: boolean;
+  paosOverride?: { pao: string; pct: number }[];
 }
 
 export default function PaoGroupCard({
   ind,
   onClick,
   fullHeight = false,
+  paosOverride,
 }: PaoGroupCardProps) {
   const paos =
-  ind.id === "I1"
+  // Si hay paosOverride, se usa eso (I2 desde DashboardView)
+  paosOverride
+    ? paosOverride
+  : ind.id === "I1"
     ? [
         { pao: "PAO 1", pct: -1 },
         { pao: "PAO 2", pct: -1 },
