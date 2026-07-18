@@ -1,29 +1,102 @@
 // ── Generación del PDF de resultados de Indicador 11.2 (Seguimiento de Syllabus) ──
-// Porteado del módulo jsPDF de ucsg_caces.git (frontend/src/app/App.tsx,
-// generarPdfAsignatura + helpers de dibujo). Mismo diseño y estructura que el
-// reporte de referencia: encabezado con metadatos, donut + barras por EF,
-// nota metodológica, tabla de fuentes por EF, detalle de encuesta (EF1/EF4),
-// tabla de evidencia documental (EF2/EF3/EF5) y anexo de las 23 preguntas.
 //
-// Sin html2canvas: todo se dibuja directo con primitivas de jsPDF (igual que
-// el original), así el alto de cada bloque se mide a partir del texto real
-// antes de dibujar, en vez de coordenadas fijas.
+// Rediseño visual (jul 2026) a partir del mockup HTML aprobado en sesión aparte
+// (mockup_pagina1_v4.html / mockup_pagina2_v2.html — logo, colores y tipografía
+// institucional UCSG). Reemplaza el diseño anterior (fondo navy, donut) por:
+// masthead con logo + ficha de metadatos, resultado general como cifra + barra
+// de progreso, tabla de "Fuentes de evidencia por elemento" con leyenda de
+// estados, detalle de la encuesta de heteroevaluación (EF1/EF4) con barras de
+// distribución de respuestas, y anexo de las 23 preguntas en página(s) aparte
+// con encabezado de continuación (logo pequeño + número de página).
 //
-// Diferencia respecto al original: ahí la evidencia documental salía de un
-// array `Evidencia[]` con campo `tipo` (mecanismo por asignatura). Acá la
-// evidencia de EF2/EF3/EF5 sale de los slots genéricos de carrera/evaluación
-// (`EvidenciaGuardada`/`EvidenciaCompartida`, campo `codigo_evidencia`), que es
-// el mecanismo real que usa esta app para I2 (ver memoria del proyecto).
+// Decisiones de esta sesión (ver memoria del proyecto):
+//   - Se elimina la tabla de "Evidencia documental" (EF2/EF3/EF5) que tenía el
+//     diseño anterior: no forma parte del nuevo layout aprobado.
+//   - Las 3 tipografías del mockup (Source Serif 4, IBM Plex Sans, IBM Plex
+//     Mono) NO son estándar de PDF, así que se embeben a mano vía
+//     doc.addFileToVFS + doc.addFont. Los TTF (subseteados a caracteres
+//     latinos/español) están en base64 en ./pdfIndicador2Fuentes.ts —ver ese
+//     archivo para la procedencia exacta de cada uno. Ahí también vive el logo
+//     PNG (el mismo bitmap embebido en el mockup aprobado, sin cambios).
+//
+// Sin html2canvas: todo se dibuja directo con primitivas de jsPDF, así el alto
+// de cada bloque se mide a partir del texto real antes de dibujar.
+//
+// La construcción del documento está separada en `construirDocumentoIndicador2`
+// (devuelve el PdfDoc ya armado, sin guardar) para poder probarla/inspeccionarla
+// sin depender de un entorno de navegador; `exportarPdfIndicador2` es la función
+// pública que usa la app y hace el `doc.save(...)` final.
 
 import type { ResultadoAsignatura, EncuestaDetalle } from "../services/seguimientoSyllabus";
-import type { EvidenciaGuardada, EvidenciaCompartida } from "../services/evidencias";
+import {
+  SourceSerif4_Regular,
+  SourceSerif4_Italic,
+  SourceSerif4_SemiBold,
+  PlexSans_Regular,
+  PlexSans_Italic,
+  PlexSans_Medium,
+  PlexSans_SemiBold,
+  PlexMono_Regular,
+  PlexMono_Medium,
+  LOGO_UCSG_PNG_BASE64,
+} from "./pdfIndicador2Fuentes";
 
 type PdfDoc = InstanceType<typeof import("jspdf").default>;
 type RGB = [number, number, number];
+type StatusKey = "ok" | "cuasi" | "poco" | "def" | "nodata";
+type FontRole = "serif" | "serifItalic" | "serifBold" | "sans" | "sansItalic" | "sansMedium" | "sansBold" | "mono" | "monoMedium";
 
-const NAVY = "#1B3A6B";
-const NAVY_DARK = "#0F1E3C";
-const SLATE = "#5A7295";
+function hexToRgb(hex: string): RGB {
+  const clean = hex.replace("#", "");
+  const bigint = parseInt(clean, 16);
+  return [(bigint >> 16) & 255, (bigint >> 8) & 255, bigint & 255];
+}
+
+// ── Paleta (idéntica a las custom properties --maroon/--paper/... del mockup) ──
+const COLOR = {
+  maroon: hexToRgb("#A00045"),
+  maroonDark: hexToRgb("#6E0032"),
+  paper: hexToRgb("#FAF9F6"),
+  ink: hexToRgb("#1C1B19"),
+  ink2: hexToRgb("#5B5850"),
+  ink3: hexToRgb("#8C887F"),
+  rule: hexToRgb("#E4E0D6"),
+  rowAlt: hexToRgb("#F4F2EC"),
+  chipBg: hexToRgb("#F7E7EE"),
+  white: [255, 255, 255] as RGB,
+  ok: hexToRgb("#2E7D4F"),
+  cuasi: hexToRgb("#2E7D82"),
+  poco: hexToRgb("#B4791E"),
+  def: hexToRgb("#B23A2E"),
+  nodata: hexToRgb("#B7B2A6"),
+};
+
+const STATUS_LABEL: Record<StatusKey, string> = {
+  ok: "Satisfactorio",
+  cuasi: "Cuasi satisf.",
+  poco: "Poco satisf.",
+  def: "Deficiente",
+  nodata: "Sin datos",
+};
+const STATUS_ORDER: StatusKey[] = ["ok", "cuasi", "poco", "def", "nodata"];
+
+// Cortes oficiales de CACES (≥75 / ≥50 / ≥25 / <25) — igual que el diseño anterior.
+function statusKeyDeValor(valor: number | null): StatusKey {
+  if (valor === null) return "nodata";
+  if (valor >= 75) return "ok";
+  if (valor >= 50) return "cuasi";
+  if (valor >= 25) return "poco";
+  return "def";
+}
+
+const FREQ_ORDER = ["Nunca", "Pocas veces", "Algunas veces", "Casi siempre", "Siempre"];
+const FREQ_COLOR: Record<string, RGB> = {
+  Nunca: hexToRgb("#B23A2E"),
+  "Pocas veces": hexToRgb("#C2703A"),
+  "Algunas veces": hexToRgb("#C9A227"),
+  "Casi siempre": hexToRgb("#6B9C4A"),
+  Siempre: hexToRgb("#2E7D4F"),
+};
 
 const EF_INFO: Record<"ef1" | "ef2" | "ef3" | "ef4" | "ef5", { titulo: string; descripcion: string; peso: number; fuente: string }> = {
   ef1: { titulo: "EF1", descripcion: "Seguimiento de contenidos del syllabus", peso: 33, fuente: "Encuesta de heteroevaluación, syllabus y malla curricular" },
@@ -33,457 +106,591 @@ const EF_INFO: Record<"ef1" | "ef2" | "ef3" | "ef4" | "ef5", { titulo: string; d
   ef5: { titulo: "EF5", descripcion: "Normativa institucional", peso: 7, fuente: "Reglamento interno de seguimiento" },
 };
 
-// codigo_evidencia (catalogo_evidencias) -> EF que alimenta y etiqueta a mostrar.
-const EVIDENCIA_PDF_LABELS: Record<string, string> = {
-  "DOC.SEG.03": "Acta de Ajuste Curricular",
-  "DOC.SEG.04": "Evidencia de Difusión",
-  "DOC.SEG.01": "Reglamento / Normativa Institucional",
-};
-const EVIDENCIA_EF: Record<string, string> = {
-  "DOC.SEG.03": "EF2",
-  "DOC.SEG.04": "EF3",
-  "DOC.SEG.01": "EF5",
-};
-
-const OPCIONES_LIKERT = ["Siempre", "Casi siempre", "Algunas veces", "Pocas veces", "Nunca"];
-
-function hexToRgb(hex: string): RGB {
-  const clean = hex.replace("#", "");
-  const bigint = parseInt(clean, 16);
-  return [(bigint >> 16) & 255, (bigint >> 8) & 255, bigint & 255];
-}
-
-function colorPorEscala(escala: string | null): RGB {
-  switch (escala) {
-    case "Satisfactorio": return [21, 128, 61];
-    case "Cuasi Satisfactorio": return [202, 138, 4];
-    case "Poco Satisfactorio": return [249, 115, 22];
-    case "Deficiente": return [239, 68, 68];
-    default: return [100, 116, 139];
-  }
-}
-
-// Mismos cortes oficiales de CACES (≥0.75 / ≥0.50 / ≥0.25 / <0.25).
-function colorPorValor(valor: number | null): RGB {
-  if (valor === null) return [148, 163, 184];
-  if (valor >= 75) return [21, 128, 61];
-  if (valor >= 50) return [202, 138, 4];
-  if (valor >= 25) return [249, 115, 22];
-  return [239, 68, 68];
-}
-
 function opcionDominante(conteos: Record<string, number>, total: number): { label: string; pct: number } | null {
   if (total <= 0) return null;
-  let mejorLabel = OPCIONES_LIKERT[0];
+  let mejorLabel = FREQ_ORDER[0];
   let mejorConteo = -1;
-  OPCIONES_LIKERT.forEach((op) => {
+  FREQ_ORDER.forEach((op) => {
     const c = conteos[op] ?? 0;
     if (c > mejorConteo) { mejorConteo = c; mejorLabel = op; }
   });
   return { label: mejorLabel, pct: Math.round((mejorConteo / total) * 100) };
 }
 
-function polarPoint(cx: number, cy: number, r: number, angleDeg: number): [number, number] {
-  const rad = ((angleDeg - 90) * Math.PI) / 180;
-  return [cx + r * Math.cos(rad), cy + r * Math.sin(rad)];
+// ── Registro de fuentes embebidas (ver pdfIndicador2Fuentes.ts) ──
+function registrarFuentes(doc: PdfDoc) {
+  doc.addFileToVFS("SourceSerif4-Regular.ttf", SourceSerif4_Regular);
+  doc.addFont("SourceSerif4-Regular.ttf", "SourceSerif4", "normal");
+  doc.addFileToVFS("SourceSerif4-Italic.ttf", SourceSerif4_Italic);
+  doc.addFont("SourceSerif4-Italic.ttf", "SourceSerif4", "italic");
+  doc.addFileToVFS("SourceSerif4-SemiBold.ttf", SourceSerif4_SemiBold);
+  doc.addFont("SourceSerif4-SemiBold.ttf", "SourceSerif4SemiBold", "normal");
+
+  doc.addFileToVFS("PlexSans-Regular.ttf", PlexSans_Regular);
+  doc.addFont("PlexSans-Regular.ttf", "PlexSans", "normal");
+  doc.addFileToVFS("PlexSans-Italic.ttf", PlexSans_Italic);
+  doc.addFont("PlexSans-Italic.ttf", "PlexSans", "italic");
+  doc.addFileToVFS("PlexSans-Medium.ttf", PlexSans_Medium);
+  doc.addFont("PlexSans-Medium.ttf", "PlexSansMedium", "normal");
+  doc.addFileToVFS("PlexSans-SemiBold.ttf", PlexSans_SemiBold);
+  doc.addFont("PlexSans-SemiBold.ttf", "PlexSansSemiBold", "normal");
+
+  doc.addFileToVFS("PlexMono-Regular.ttf", PlexMono_Regular);
+  doc.addFont("PlexMono-Regular.ttf", "PlexMono", "normal");
+  doc.addFileToVFS("PlexMono-Medium.ttf", PlexMono_Medium);
+  doc.addFont("PlexMono-Medium.ttf", "PlexMonoMedium", "normal");
 }
 
-function drawRingSegment(doc: PdfDoc, cx: number, cy: number, rOuter: number, rInner: number, startDeg: number, endDeg: number, rgb: RGB) {
-  if (endDeg <= startDeg) return;
-  doc.setFillColor(rgb[0], rgb[1], rgb[2]);
-  const step = 3;
-  for (let a = startDeg; a < endDeg; a += step) {
-    const a2 = Math.min(a + step, endDeg);
-    const [ox1, oy1] = polarPoint(cx, cy, rOuter, a);
-    const [ox2, oy2] = polarPoint(cx, cy, rOuter, a2);
-    const [ix1, iy1] = polarPoint(cx, cy, rInner, a);
-    const [ix2, iy2] = polarPoint(cx, cy, rInner, a2);
-    doc.triangle(ox1, oy1, ox2, oy2, ix1, iy1, "F");
-    doc.triangle(ox2, oy2, ix2, iy2, ix1, iy1, "F");
+// Wrapper: fija familia + tamaño (pt) + color de texto en un solo llamado.
+function fuente(doc: PdfDoc, rol: FontRole, sizePt: number, color: RGB) {
+  switch (rol) {
+    case "serif": doc.setFont("SourceSerif4", "normal"); break;
+    case "serifItalic": doc.setFont("SourceSerif4", "italic"); break;
+    case "serifBold": doc.setFont("SourceSerif4SemiBold", "normal"); break;
+    case "sans": doc.setFont("PlexSans", "normal"); break;
+    case "sansItalic": doc.setFont("PlexSans", "italic"); break;
+    case "sansMedium": doc.setFont("PlexSansMedium", "normal"); break;
+    case "sansBold": doc.setFont("PlexSansSemiBold", "normal"); break;
+    case "mono": doc.setFont("PlexMono", "normal"); break;
+    case "monoMedium": doc.setFont("PlexMonoMedium", "normal"); break;
   }
+  doc.setFontSize(sizePt);
+  doc.setTextColor(color[0], color[1], color[2]);
+}
+function fill(doc: PdfDoc, c: RGB) { doc.setFillColor(c[0], c[1], c[2]); }
+function stroke(doc: PdfDoc, c: RGB) { doc.setDrawColor(c[0], c[1], c[2]); }
+
+// ── Geometría de página (mm — igual que el mockup, ya diseñado en mm para A4) ──
+const PAGE_W = 210;
+const PAGE_H = 297;
+const MARGIN_X = 16;
+const MARGIN_TOP = 16;
+const MARGIN_BOTTOM = 14;
+const CONTENT_W = PAGE_W - MARGIN_X * 2; // 178mm
+const CONT_HEADER_BOTTOM_Y = 32; // y donde empieza el contenido en páginas de continuación
+
+function drawDiamond(doc: PdfDoc, cx: number, cy: number, r: number, color: RGB) {
+  fill(doc, color);
+  doc.triangle(cx, cy - r, cx - r, cy, cx + r, cy, "F");
+  doc.triangle(cx, cy + r, cx - r, cy, cx + r, cy, "F");
+}
+function drawDot(doc: PdfDoc, cx: number, cy: number, r: number, color: RGB) {
+  fill(doc, color);
+  doc.circle(cx, cy, r, "F");
 }
 
-// Donut: pct 0-100, empieza arriba (12 en punto) y avanza en sentido horario.
-function drawDonut(doc: PdfDoc, cx: number, cy: number, rOuter: number, rInner: number, pct: number, colorRgb: RGB) {
-  const trackRgb: RGB = [226, 232, 240];
-  const sweep = Math.max(0, Math.min(100, pct)) * 3.6;
-  if (sweep < 360) drawRingSegment(doc, cx, cy, rOuter, rInner, sweep, 360, trackRgb);
-  if (sweep > 0) drawRingSegment(doc, cx, cy, rOuter, rInner, 0, sweep, colorRgb);
+// Encabezado de sección: ◆ Título ───────── (línea a la derecha hasta el borde).
+function dividerConTitulo(doc: PdfDoc, x: number, y: number, w: number, titulo: string): number {
+  const cy = y + 2.4;
+  drawDiamond(doc, x + 1.1, cy, 1.1, COLOR.maroon);
+  fuente(doc, "serifBold", 11, COLOR.ink);
+  const tx = x + 4.2;
+  doc.text(titulo, tx, cy + 1.1);
+  const tw = doc.getTextWidth(titulo);
+  stroke(doc, COLOR.rule);
+  doc.setLineWidth(0.15);
+  doc.line(tx + tw + 3, cy, x + w, cy);
+  return y + 6.5;
+}
+function drawSectionSub(doc: PdfDoc, x: number, y: number, w: number, texto: string): number {
+  fuente(doc, "sans", 7.2, COLOR.ink2);
+  const lineas = doc.splitTextToSize(texto, w);
+  doc.text(lineas, x, y);
+  return y + lineas.length * 3.2 + 3;
 }
 
-function drawBarraHorizontal(doc: PdfDoc, x: number, y: number, w: number, h: number, pct: number, colorRgb: RGB) {
-  doc.setFillColor(226, 232, 240);
-  doc.roundedRect(x, y, w, h, h / 2, h / 2, "F");
-  const anchoLleno = (w * Math.max(0, Math.min(100, pct))) / 100;
-  if (anchoLleno > 0.6) {
-    doc.setFillColor(colorRgb[0], colorRgb[1], colorRgb[2]);
-    doc.roundedRect(x, y, anchoLleno, h, h / 2, h / 2, "F");
-  }
-}
-
-function drawSectionHeader(doc: PdfDoc, titulo: string, subtitulo: string, x: number, y: number, contentW: number, navyDark: RGB, slate: RGB): number {
-  doc.setFont("times", "bold");
-  doc.setFontSize(12.5);
-  doc.setTextColor(navyDark[0], navyDark[1], navyDark[2]);
-  doc.text(titulo, x, y);
-  let yy = y + 4.5;
-  if (subtitulo) {
-    doc.setFont("times", "normal");
-    doc.setFontSize(8);
-    doc.setTextColor(slate[0], slate[1], slate[2]);
-    const lineas = doc.splitTextToSize(subtitulo, contentW);
-    doc.text(lineas, x, yy);
-    yy += lineas.length * 3.6 + 2;
-  }
-  return yy + 1.5;
-}
-
-// Tabla genérica con encabezado de color y filas alternadas. Mide el alto
-// real de cada fila (según el texto envuelto más largo de esa fila) ANTES
-// de dibujarla, y repite el encabezado si la fila cae en una página nueva.
-function dibujarTabla(
-  doc: PdfDoc, xStart: number, yStart: number,
-  columnas: { header: string; width: number }[],
-  filas: string[][],
-  colores: { navy: RGB; navyDark: RGB; slate: RGB },
-  pageH: number,
+// ── Masthead de página 1 (logo + eyebrow/h1/h2 + ficha de metadatos) ──
+function drawMasthead(
+  doc: PdfDoc,
+  asignatura: ResultadoAsignatura,
+  cohortLabel: string,
+  paoNumero: number,
 ): number {
-  const marginBottom = 15;
-  const headerH = 7.5;
-  const anchoTotal = columnas.reduce((s, c) => s + c.width, 0);
-  let y = yStart;
+  const logoH = 9;
+  const logoW = logoH * (460 / 241);
+  doc.addImage(LOGO_UCSG_PNG_BASE64, "PNG", MARGIN_X, MARGIN_TOP, logoW, logoH);
 
-  function dibujarEncabezado() {
-    doc.setFillColor(colores.navy[0], colores.navy[1], colores.navy[2]);
-    doc.rect(xStart, y, anchoTotal, headerH, "F");
-    doc.setFont("courier", "bold");
-    doc.setFontSize(7.5);
-    doc.setTextColor(255, 255, 255);
-    let cx = xStart;
-    columnas.forEach((col) => {
-      doc.text(col.header.toUpperCase(), cx + 2.5, y + 5);
-      cx += col.width;
+  const rightX = MARGIN_X + CONTENT_W;
+  const tituloLineas = doc.splitTextToSize(asignatura.nombre_asignatura, CONTENT_W - logoW - 6);
+  const bloqueTextoH = 3.2 + 5.3 + tituloLineas.length * 4.1;
+  const headerH = Math.max(logoH, bloqueTextoH) + 4; // + padding-bottom
+
+  let ty = MARGIN_TOP;
+  fuente(doc, "mono", 7.2, COLOR.maroon);
+  doc.text("INDICADOR 11.2 · CACES", rightX, ty, { align: "right" });
+  ty += 5.3;
+  fuente(doc, "serifBold", 13.5, COLOR.ink);
+  doc.text("Seguimiento de syllabus", rightX, ty, { align: "right" });
+  ty += 4.6;
+  fuente(doc, "serifItalic", 9, COLOR.ink2);
+  doc.text(tituloLineas, rightX, ty, { align: "right" });
+
+  const yBorde = MARGIN_TOP + headerH;
+  stroke(doc, COLOR.maroon);
+  doc.setLineWidth(0.5);
+  doc.line(MARGIN_X, yBorde, MARGIN_X + CONTENT_W, yBorde);
+
+  // Ficha: Docente / Cohorte / PAO / Generado
+  const yFicha = yBorde + 5;
+  const colW = CONTENT_W / 4;
+  const meta: [string, string, boolean][] = [
+    ["Docente", "Sin asignar", true],
+    ["Cohorte", `Cohorte ${cohortLabel}`, false],
+    ["PAO", `PAO ${paoNumero}`, false],
+    ["Generado", new Date().toLocaleString("es-EC", { day: "2-digit", month: "long", year: "numeric", hour: "numeric", minute: "2-digit" }), false],
+  ];
+  meta.forEach(([label, valor, muted], i) => {
+    const cx = MARGIN_X + i * colW;
+    if (i > 0) {
+      stroke(doc, COLOR.rule);
+      doc.setLineWidth(0.1);
+      doc.line(cx, yFicha - 3.6, cx, yFicha + 2.5);
+    }
+    const tx0 = cx + (i > 0 ? 4 : 0);
+    fuente(doc, "mono", 6.3, COLOR.ink3);
+    doc.text(label.toUpperCase(), tx0, yFicha - 1.5);
+    if (muted) {
+      fuente(doc, "sansItalic", 9.5, COLOR.ink3);
+    } else {
+      fuente(doc, "sansMedium", 9.5, COLOR.ink);
+    }
+    doc.text(valor, tx0, yFicha + 2.5);
+  });
+
+  return yFicha + 6;
+}
+
+// ── Encabezado de página de continuación (logo pequeño + número de página) ──
+function drawRunHeader(doc: PdfDoc, paginaNum: number) {
+  const logoH = 9;
+  const logoW = logoH * (460 / 241);
+  doc.addImage(LOGO_UCSG_PNG_BASE64, "PNG", MARGIN_X, MARGIN_TOP, logoW, logoH);
+  fuente(doc, "mono", 7.5, COLOR.ink3);
+  doc.text(String(paginaNum).padStart(2, "0"), MARGIN_X + CONTENT_W, MARGIN_TOP + logoH - 1.5, { align: "right" });
+  const yBorde = MARGIN_TOP + logoH + 2.5;
+  stroke(doc, COLOR.rule);
+  doc.setLineWidth(0.2);
+  doc.line(MARGIN_X, yBorde, MARGIN_X + CONTENT_W, yBorde);
+}
+
+// ── Pie fijo (idéntico en todas las páginas, no depende del contenido) ──
+function drawFondoPapel(doc: PdfDoc) {
+  fill(doc, COLOR.paper);
+  doc.rect(0, 0, PAGE_W, PAGE_H, "F");
+}
+
+function drawFooter(doc: PdfDoc) {
+  const y = PAGE_H - MARGIN_BOTTOM + 4;
+  stroke(doc, COLOR.rule);
+  doc.setLineWidth(0.15);
+  doc.line(MARGIN_X, y - 4, MARGIN_X + CONTENT_W, y - 4);
+  fuente(doc, "sans", 7.2, COLOR.ink3);
+  doc.text("UCSG · Sistema de seguimiento académico", MARGIN_X, y);
+  doc.text("Indicador 11.2 — Seguimiento de syllabus", MARGIN_X + CONTENT_W, y, { align: "right" });
+}
+
+// ── Resultado general: cifra + estado + barra de progreso ──
+function drawResultadoGeneral(doc: PdfDoc, y: number, asignatura: ResultadoAsignatura): number {
+  const valor = asignatura.valoracion_general;
+  const statusKey = statusKeyDeValor(valor);
+  const color = COLOR[statusKey];
+
+  fuente(doc, "serifBold", 30, COLOR.ink);
+  doc.text(valor === null ? "—" : `${valor}%`, MARGIN_X, y + 8);
+  const numW = doc.getTextWidth(valor === null ? "—" : `${valor}%`);
+
+  const statusX = MARGIN_X + numW + 6;
+  drawDot(doc, statusX + 0.9, y + 4.3, 0.9, color);
+  fuente(doc, "monoMedium", 8.5, color);
+  doc.text((asignatura.escala ?? STATUS_LABEL.nodata).toUpperCase(), statusX + 2.6, y + 5.2);
+
+  fuente(doc, "mono", 7, COLOR.ink3);
+  doc.text("Puntaje agregado · Indicador 11.2", MARGIN_X + CONTENT_W, y + 5.2, { align: "right" });
+
+  const meterY = y + 12;
+  fill(doc, COLOR.rule);
+  doc.roundedRect(MARGIN_X, meterY, CONTENT_W, 1.4, 0.7, 0.7, "F");
+  if (valor !== null && valor > 0) {
+    fill(doc, color);
+    doc.roundedRect(MARGIN_X, meterY, (CONTENT_W * Math.min(100, valor)) / 100, 1.4, 0.7, 0.7, "F");
+  }
+  fuente(doc, "mono", 5.6, COLOR.ink3);
+  [0, 25, 50, 75, 100].forEach((n, i) => {
+    const align = i === 0 ? "left" : i === 4 ? "right" : "center";
+    const tx = MARGIN_X + (CONTENT_W * n) / 100;
+    doc.text(String(n), tx, meterY + 4, { align });
+  });
+
+  return meterY + 8;
+}
+
+// ── Tabla "Fuentes de evidencia por elemento" (estilo master-table) ──
+function drawTablaEFs(
+  doc: PdfDoc,
+  yInicial: number,
+  asignatura: ResultadoAsignatura,
+  encuestaDetalle: EncuestaDetalle,
+  checkPageBreak: (yActual: number, alturaNecesaria: number) => number,
+): number {
+  let y = yInicial;
+  const cols = [
+    { w: 11 }, // EF
+    { w: 127 }, // Elemento + fuente
+    { w: 16 }, // Peso
+    { w: 24 }, // Resultado
+  ];
+  const headerH = 7;
+
+  const dibujarEncabezado = () => {
+    fill(doc, COLOR.maroon);
+    doc.rect(MARGIN_X, y, CONTENT_W, headerH, "F");
+    fuente(doc, "monoMedium", 6.3, COLOR.white);
+    let cx = MARGIN_X;
+    ["EF", "ELEMENTO FUNDAMENTAL Y FUENTE DE EVIDENCIA", "PESO", "RESULTADO"].forEach((h, i) => {
+      doc.text(h, cx + 3, y + 4.6, i === 3 ? { align: "right" } : {});
+      cx += cols[i].w;
     });
     y += headerH;
-  }
-
+  };
   dibujarEncabezado();
 
-  filas.forEach((fila, i) => {
-    const lineasPorCelda = fila.map((texto, ci) => doc.splitTextToSize(texto || "—", columnas[ci].width - 5));
-    const maxLineas = Math.max(...lineasPorCelda.map((l: string[]) => l.length), 1);
-    const rowH = maxLineas * 4 + 3;
-
-    if (y + rowH > pageH - marginBottom) {
-      doc.addPage();
-      y = 15;
-      dibujarEncabezado();
-    }
-
-    if (i % 2 === 1) {
-      doc.setFillColor(248, 250, 253);
-      doc.rect(xStart, y, anchoTotal, rowH, "F");
-    }
-
-    doc.setFont("times", "normal");
-    doc.setFontSize(8);
-    doc.setTextColor(colores.navyDark[0], colores.navyDark[1], colores.navyDark[2]);
-    let cx = xStart;
-    fila.forEach((_texto, ci) => {
-      doc.text(lineasPorCelda[ci], cx + 2.5, y + 4.3);
-      cx += columnas[ci].width;
-    });
-    y += rowH;
-  });
-
-  doc.setDrawColor(226, 232, 240);
-  doc.line(xStart, y, xStart + anchoTotal, y);
-  return y;
-}
-
-export interface ExportarPdfIndicador2Params {
-  /** Resultado EF1-EF5 de la asignatura seleccionada (viene de resultado_cohorte.php / resultado_asignatura.php). */
-  asignatura: ResultadoAsignatura;
-  /** Etiqueta de cohorte tal como se muestra en la app, ej. "B2025". */
-  cohortLabel: string;
-  /** Número de PAO (1, 2, 3...). */
-  paoNumero: number;
-  /** Evidencias de la evaluación para el indicador I2: guardadas + compartidas (DOC.SYL.* heredadas de I1 no se usan acá, solo DOC.SEG.*). */
-  evidencias: (EvidenciaGuardada | EvidenciaCompartida)[];
-  /** Detalle de las 23 preguntas de la encuesta, filtrado por esta asignatura. */
-  encuestaDetalle: EncuestaDetalle;
-}
-
-export async function exportarPdfIndicador2(params: ExportarPdfIndicador2Params): Promise<void> {
-  const { asignatura, cohortLabel, paoNumero, evidencias, encuestaDetalle } = params;
-
-  // jsPDF pesa ~300kB y solo se usa acá, así que se carga con import()
-  // dinámico para que no forme parte del bundle inicial.
-  const { default: jsPDF } = await import("jspdf");
-
-  const doc: PdfDoc = new jsPDF({ unit: "mm", format: "a4" });
-  const pageW = doc.internal.pageSize.getWidth();
-  const pageH = doc.internal.pageSize.getHeight();
-  const marginX = 15;
-  const contentW = pageW - marginX * 2;
-  let y = 0;
-
-  const navy = hexToRgb(NAVY);
-  const navyDark = hexToRgb(NAVY_DARK);
-  const slate = hexToRgb(SLATE);
-  const rojoSinEvidencia: RGB = [239, 68, 68];
-
-  function checkPageBreak(alturaNecesaria: number) {
-    if (y + alturaNecesaria > pageH - 15) {
-      doc.addPage();
-      y = 15;
-    }
-  }
-
-  // ── Encabezado ──
-  const tituloLineas = doc.splitTextToSize(asignatura.nombre_asignatura, contentW);
-  const alturaEncabezado = 20 + tituloLineas.length * 6.5;
-  doc.setFillColor(navy[0], navy[1], navy[2]);
-  doc.rect(0, 0, pageW, alturaEncabezado, "F");
-  doc.setFont("courier", "bold");
-  doc.setFontSize(7.5);
-  doc.setTextColor(190, 205, 225);
-  doc.text("INDICADOR 11.2 · CACES — SEGUIMIENTO DE SYLLABUS", marginX, 9);
-  doc.setFont("times", "bold");
-  doc.setFontSize(16);
-  doc.setTextColor(255, 255, 255);
-  doc.text(tituloLineas, marginX, 18);
-  y = alturaEncabezado + 9;
-
-  // Fila de metadatos (DOCENTE / COHORTE / PAO / GENERADO)
-  const metaColW = contentW / 4;
-  const meta: [string, string][] = [
-    ["DOCENTE", "—"], // el modelo actual no registra docente por asignatura todavía.
-    ["COHORTE", `Cohorte ${cohortLabel}`],
-    ["PAO", `PAO ${paoNumero}`],
-    ["GENERADO", new Date().toLocaleString("es-EC", { day: "2-digit", month: "long", year: "numeric", hour: "numeric", minute: "2-digit" })],
-  ];
-  meta.forEach(([label, valor], i) => {
-    const mx = marginX + i * metaColW;
-    doc.setFont("courier", "bold");
-    doc.setFontSize(7);
-    doc.setTextColor(slate[0], slate[1], slate[2]);
-    doc.text(label, mx, y);
-    doc.setFont("times", "bold");
-    doc.setFontSize(9.5);
-    doc.setTextColor(navyDark[0], navyDark[1], navyDark[2]);
-    const lineasValor = doc.splitTextToSize(valor, metaColW - 4);
-    doc.text(lineasValor, mx, y + 5);
-  });
-  y += 16;
-
-  // ── Resumen general (donut + barras por EF) ──
-  y = drawSectionHeader(
-    doc, "Resultado general",
-    "Puntaje agregado del indicador y desempeño individual de cada Elemento Fundamental (EF), ponderado según el modelo oficial de evaluación CACES.",
-    marginX, y, contentW, navyDark, slate,
-  );
-
-  const bloqueAltura = 46;
-  checkPageBreak(bloqueAltura);
-  const yBloque = y;
-
-  // Donut a la izquierda
-  const donutCx = marginX + 26;
-  const donutCy = yBloque + bloqueAltura / 2 - 2;
-  const colorEscala = colorPorEscala(asignatura.escala);
-  if (asignatura.valoracion_general !== null) {
-    drawDonut(doc, donutCx, donutCy, 20, 13, asignatura.valoracion_general, colorEscala);
-    doc.setFont("courier", "bold");
-    doc.setFontSize(15);
-    doc.setTextColor(navyDark[0], navyDark[1], navyDark[2]);
-    doc.text(`${asignatura.valoracion_general}%`, donutCx, donutCy + 2, { align: "center" });
-  } else {
-    drawDonut(doc, donutCx, donutCy, 20, 13, 0, [148, 163, 184]);
-    doc.setFont("courier", "bold");
-    doc.setFontSize(10);
-    doc.setTextColor(148, 163, 184);
-    doc.text("Sin datos", donutCx, donutCy + 1.5, { align: "center" });
-  }
-  doc.setFont("times", "bold");
-  doc.setFontSize(9.5);
-  doc.setTextColor(colorEscala[0], colorEscala[1], colorEscala[2]);
-  doc.text(asignatura.escala ?? "Falta evidencia", donutCx, donutCy + 27, { align: "center" });
-
-  // Filas de EF a la derecha
   const efKeys: ("ef1" | "ef2" | "ef3" | "ef4" | "ef5")[] = ["ef1", "ef2", "ef3", "ef4", "ef5"];
-  const efColX = marginX + 58;
-  const efColW = contentW - 58;
-  const textW = efColW * 0.55;
-  const barX = efColX + textW + 3;
-  const barW = efColW - textW - 3 - 15;
-  const pctX = barX + barW + 3;
-  const rowH = bloqueAltura / 5;
-
   efKeys.forEach((key, i) => {
     const info = EF_INFO[key];
     const valor = asignatura[key];
-    const ry = yBloque + i * rowH;
-    const colorBarra = colorPorValor(valor);
+    const statusKey = statusKeyDeValor(valor);
+    const color = COLOR[statusKey];
 
-    doc.setFont("times", "bold");
-    doc.setFontSize(8.5);
-    doc.setTextColor(navyDark[0], navyDark[1], navyDark[2]);
-    doc.text(`${info.titulo}  ${info.descripcion}`, efColX, ry + 4.5);
-    doc.setFont("courier", "normal");
-    doc.setFontSize(6.5);
-    doc.setTextColor(slate[0], slate[1], slate[2]);
-    doc.text(`peso ${info.peso}% del indicador`, efColX, ry + 8.3);
+    // Preguntas de la encuesta que alimentan este EF (ref. "P5 · P8 · P13").
+    const numerosPregunta = key === "ef1" || key === "ef4"
+      ? encuestaDetalle.preguntas.filter((p) => (key === "ef1" ? p.es_ef1 : p.es_ef4)).map((p) => `P${p.numero}`)
+      : [];
 
-    const barY = ry + 3;
-    drawBarraHorizontal(doc, barX, barY, barW, 3, valor ?? 0, colorBarra);
-    doc.setFont("courier", "bold");
-    doc.setFontSize(9);
-    doc.setTextColor(colorBarra[0], colorBarra[1], colorBarra[2]);
-    doc.text(valor === null ? "—" : `${valor}%`, pctX, barY + 2.6);
+    fuente(doc, "sansMedium", 8.2, COLOR.ink);
+    const nombreLineas = doc.splitTextToSize(info.descripcion, cols[1].w - 5);
+    fuente(doc, "sans", 7.4, COLOR.ink2);
+    const fuenteTexto = numerosPregunta.length > 0
+      ? `Encuesta de heteroevaluación (${numerosPregunta.join(" · ")}) — ${info.fuente.replace(/^Encuesta de heteroevaluación,\s*/, "")}`
+      : info.fuente;
+    const fuenteLineas = doc.splitTextToSize(fuenteTexto, cols[1].w - 5);
+    const rowH = Math.max(nombreLineas.length * 3.7 + fuenteLineas.length * 3.3 + 5, 10);
+
+    const yNueva = checkPageBreak(y, rowH);
+    if (yNueva !== y) { y = yNueva; dibujarEncabezado(); }
+
+    if (i % 2 === 1) {
+      fill(doc, COLOR.rowAlt);
+      doc.rect(MARGIN_X, y, CONTENT_W, rowH, "F");
+    }
+
+    let cx2 = MARGIN_X;
+    fuente(doc, "monoMedium", 8, COLOR.maroon);
+    doc.text(info.titulo, cx2 + 3, y + 5);
+    cx2 += cols[0].w;
+
+    fuente(doc, "sansMedium", 8.2, COLOR.ink);
+    doc.text(nombreLineas, cx2 + 3, y + 4.6);
+    fuente(doc, "sans", 7.4, COLOR.ink2);
+    doc.text(fuenteLineas, cx2 + 3, y + 4.6 + nombreLineas.length * 3.7 + 1.2);
+    cx2 += cols[1].w;
+
+    fuente(doc, "mono", 7.6, COLOR.ink3);
+    doc.text(`${info.peso}%`, cx2 + cols[2].w - 3, y + 5, { align: "right" });
+    cx2 += cols[2].w;
+
+    const pctTexto = valor === null ? "—" : `${valor}%`;
+    fuente(doc, "serifBold", 10, color);
+    doc.text(pctTexto, cx2 + cols[3].w - 3, y + 4.8, { align: "right" });
+    fuente(doc, "mono", 5.6, color);
+    doc.text(STATUS_LABEL[statusKey].toUpperCase(), cx2 + cols[3].w - 3, y + 8, { align: "right" });
+
+    stroke(doc, COLOR.rule);
+    doc.setLineWidth(0.1);
+    doc.line(MARGIN_X, y + rowH, MARGIN_X + CONTENT_W, y + rowH);
+
+    y += rowH;
   });
-  y = yBloque + bloqueAltura + 4;
 
-  // Nota metodológica
-  checkPageBreak(20);
-  const notaTexto =
-    "Nota metodológica — este porcentaje es un proxy continuo de gestión interna que la carrera usa para prepararse antes de la visita del Comité Externo. El procedimiento oficial de CACES categoriza cada EF de forma discreta (Satisfactorio / Cuasi satisfactorio / Poco satisfactorio / Deficiente) mediante juicio de un evaluador humano sobre la evidencia presentada.";
-  const notaLineas = doc.splitTextToSize(notaTexto, contentW - 8);
-  const notaAltura = notaLineas.length * 3.6 + 6;
-  doc.setFillColor(248, 250, 253);
-  doc.setDrawColor(226, 232, 240);
-  doc.roundedRect(marginX, y, contentW, notaAltura, 2, 2, "FD");
-  doc.setFont("times", "normal");
-  doc.setFontSize(7.5);
-  doc.setTextColor(slate[0], slate[1], slate[2]);
-  doc.text(notaLineas, marginX + 4, y + 5);
-  y += notaAltura + 8;
+  return y + 3;
+}
 
-  // ── Fuentes de evidencia por elemento ──
-  checkPageBreak(20);
-  y = drawSectionHeader(doc, "Fuentes de evidencia por elemento", "Origen de la información que sustenta el resultado de cada Elemento Fundamental.", marginX, y, contentW, navyDark, slate);
-  const filasFuentes = efKeys.map((key) => {
-    const info = EF_INFO[key];
-    const valor = asignatura[key];
-    return [info.titulo, info.descripcion, info.fuente, valor === null ? "Sin datos" : `${valor}%`];
+function drawLeyendaEstados(doc: PdfDoc, y: number): number {
+  const h = 8;
+  fill(doc, COLOR.rowAlt);
+  doc.rect(MARGIN_X, y, CONTENT_W, h, "F");
+  let cx = MARGIN_X + 3;
+  STATUS_ORDER.forEach((key) => {
+    drawDot(doc, cx + 0.9, y + h / 2, 0.9, COLOR[key]);
+    fuente(doc, "sans", 7, COLOR.ink2);
+    doc.text(STATUS_LABEL[key], cx + 2.6, y + h / 2 + 1);
+    cx += 4 + doc.getTextWidth(STATUS_LABEL[key]) + 8;
   });
-  y = dibujarTabla(
-    doc, marginX, y,
-    [
-      { header: "EF", width: 12 },
-      { header: "Elemento fundamental", width: 48 },
-      { header: "Fuente de evidencia", width: 85 },
-      { header: "Resultado", width: contentW - 12 - 48 - 85 },
-    ],
-    filasFuentes,
-    { navy, navyDark, slate },
-    pageH,
-  );
-  y += 10;
+  return y + h + 6;
+}
 
-  // ── Detalle de encuesta (EF1 y EF4) ──
-  checkPageBreak(20);
-  y = drawSectionHeader(
-    doc, "Detalle de la encuesta de heteroevaluación",
-    `Preguntas que alimentan EF1 y EF4 · respuestas consideradas para esta asignatura: ${encuestaDetalle.respuestas_totales_materia}.`,
-    marginX, y, contentW, navyDark, slate,
-  );
+// Mini barra apilada de distribución de respuestas (misma paleta FREQ del mockup).
+function drawDistBar(doc: PdfDoc, x: number, y: number, w: number, h: number, conteos: Record<string, number>, total: number) {
+  fill(doc, hexToRgb("#EFEDE6"));
+  doc.roundedRect(x, y, w, h, h / 2, h / 2, "F");
+  if (total <= 0) {
+    fill(doc, COLOR.nodata);
+    doc.roundedRect(x, y, w, h, h / 2, h / 2, "F");
+    return;
+  }
+  let cursor = x;
+  FREQ_ORDER.forEach((op) => {
+    const n = conteos[op] ?? 0;
+    if (n <= 0) return;
+    const segW = (w * n) / total;
+    fill(doc, FREQ_COLOR[op]);
+    doc.rect(cursor, y, segW, h, "F");
+    cursor += segW;
+  });
+}
 
+// ── Detalle de encuesta de heteroevaluación (EF1/EF4) — filas tipo q-table ──
+function drawDetalleEncuesta(
+  doc: PdfDoc,
+  yInicial: number,
+  encuestaDetalle: EncuestaDetalle,
+  checkPageBreak: (yActual: number, alturaNecesaria: number) => number,
+): number {
+  let y = yInicial;
   const preguntasEF = encuestaDetalle.preguntas.filter((p) => p.es_ef1 || p.es_ef4);
-  preguntasEF.forEach((p) => {
+
+  const colPreg = 13, colEF = 11, colDist = 34, colResult = 32;
+  const colTexto = CONTENT_W - colPreg - colEF - colDist - colResult;
+
+  const headerH = 6.5;
+  const dibujarEncabezado = () => {
+    fill(doc, COLOR.maroon);
+    doc.rect(MARGIN_X, y, CONTENT_W, headerH, "F");
+    fuente(doc, "monoMedium", 6, COLOR.white);
+    let cx = MARGIN_X;
+    [["PREG.", colPreg], ["EF", colEF], ["ENUNCIADO", colTexto], ["DISTRIBUCIÓN", colDist], ["RESULTADO", colResult]].forEach(([h, w], i) => {
+      doc.text(h as string, cx + 3, y + 4.4, i === 4 ? { align: "right" } : {});
+      cx += w as number;
+    });
+    y += headerH;
+  };
+  dibujarEncabezado();
+
+  preguntasEF.forEach((p, i) => {
     const textoPregunta = p.texto ?? "(pregunta no encontrada en la encuesta actual)";
-    const lineasTexto = doc.splitTextToSize(textoPregunta, contentW);
-    const resumenConteo = p.total > 0
-      ? OPCIONES_LIKERT.map((op) => `${op}: ${p.conteos[op] ?? 0} (${Math.round(((p.conteos[op] ?? 0) / p.total) * 100)}%)`).join("  ·  ")
-      : "Sin respuestas para esta materia";
-    const lineasConteo = doc.splitTextToSize(resumenConteo, contentW);
-    const alturaBloque = 5 + lineasTexto.length * 4.2 + 2 + lineasConteo.length * 3.8 + 5;
+    const lineasTexto = doc.splitTextToSize(textoPregunta, colTexto - 5);
+    const rowH = Math.max(lineasTexto.length * 3.4 + 4, 9);
 
-    checkPageBreak(alturaBloque);
-    doc.setFont("courier", "bold");
-    doc.setFontSize(8.5);
-    doc.setTextColor(navy[0], navy[1], navy[2]);
-    doc.text(`P${p.numero}  ${p.es_ef1 ? "EF1" : "EF4"}`, marginX, y);
-    y += 5;
+    const yNueva = checkPageBreak(y, rowH);
+    if (yNueva !== y) { y = yNueva; dibujarEncabezado(); }
 
-    doc.setFont("times", "normal");
-    doc.setFontSize(9);
-    doc.setTextColor(navyDark[0], navyDark[1], navyDark[2]);
-    doc.text(lineasTexto, marginX, y);
-    y += lineasTexto.length * 4.2 + 2;
+    if (i % 2 === 1) {
+      fill(doc, COLOR.white);
+    } else {
+      fill(doc, COLOR.rowAlt);
+    }
+    doc.rect(MARGIN_X, y, CONTENT_W, rowH, "F");
 
-    doc.setFont("courier", "normal");
-    doc.setFontSize(7.5);
-    doc.setTextColor(slate[0], slate[1], slate[2]);
-    doc.text(lineasConteo, marginX, y);
-    y += lineasConteo.length * 3.8 + 5;
+    let cx = MARGIN_X;
+    fuente(doc, "monoMedium", 7.5, COLOR.ink);
+    doc.text(`P${p.numero}`, cx + 3, y + rowH / 2 + 1.2);
+    cx += colPreg;
+
+    fuente(doc, "monoMedium", 7.5, COLOR.maroon);
+    doc.text(p.es_ef1 ? "EF1" : "EF4", cx + 3, y + rowH / 2 + 1.2);
+    cx += colEF;
+
+    fuente(doc, "sans", 7.8, COLOR.ink);
+    doc.text(lineasTexto, cx + 3, y + 4.2);
+    cx += colTexto;
+
+    const total = p.total;
+    const dom = opcionDominante(p.conteos, total);
+    drawDistBar(doc, cx + 3, y + rowH / 2 - 0.8, colDist - 6, 1.6, p.conteos, total);
+    cx += colDist;
+
+    if (dom) {
+      fuente(doc, "sansBold", 7.5, FREQ_COLOR[dom.label]);
+      doc.text(dom.label, MARGIN_X + CONTENT_W - 3, y + rowH / 2, { align: "right" });
+      fuente(doc, "mono", 6, COLOR.ink3);
+      doc.text(`${dom.pct}% · n=${total}`, MARGIN_X + CONTENT_W - 3, y + rowH / 2 + 3, { align: "right" });
+    } else {
+      fuente(doc, "sansItalic", 7, COLOR.ink3);
+      doc.text("Sin respuestas", MARGIN_X + CONTENT_W - 3, y + rowH / 2 + 1, { align: "right" });
+    }
+
+    stroke(doc, COLOR.rule);
+    doc.setLineWidth(0.1);
+    doc.line(MARGIN_X, y + rowH, MARGIN_X + CONTENT_W, y + rowH);
+    y += rowH;
   });
-  y += 4;
 
-  // ── Evidencia documental (EF2, EF3, EF5) ──
-  checkPageBreak(20);
-  y = drawSectionHeader(doc, "Evidencia documental", "Archivos que sustentan EF2, EF3 y EF5.", marginX, y, contentW, navyDark, slate);
-  const codigosEvidencia = Object.keys(EVIDENCIA_PDF_LABELS);
-  const filasEvidencia = codigosEvidencia.map((codigo) => {
-    const ev = evidencias.find((e) => e.codigo_evidencia === codigo);
-    return [
-      EVIDENCIA_EF[codigo],
-      EVIDENCIA_PDF_LABELS[codigo],
-      ev ? ev.nombre_archivo : "Sin evidencia subida",
-      ev ? new Date(ev.fecha_subida).toLocaleDateString("es-EC") : "—",
-      "—", // el modelo actual no registra "subido por" en los slots de carrera/evaluación.
-    ];
+  return y + 5;
+}
+
+// ── Nota de validez (línea pequeña itálica antes del pie, solo página 1) ──
+function drawValidityNote(doc: PdfDoc, y: number): number {
+  drawDiamond(doc, MARGIN_X + 0.6, y + 1.1, 0.6, COLOR.maroon);
+  fuente(doc, "monoMedium", 7, COLOR.ink3);
+  doc.text("Documento generado automáticamente por el sistema de seguimiento académico UCSG · No requiere firma.", MARGIN_X + 2.6, y + 1.6);
+  return y + 6;
+}
+
+// ── Anexo: las 23 preguntas, formato compacto (página de continuación) ──
+function drawLeyendaFrecuencias(doc: PdfDoc, y: number): number {
+  let cx = MARGIN_X;
+  fuente(doc, "sans", 7, COLOR.ink2);
+  FREQ_ORDER.forEach((op) => {
+    drawDot(doc, cx + 0.8, y, 0.8, FREQ_COLOR[op]);
+    doc.text(op, cx + 2.3, y + 1);
+    cx += 2.3 + doc.getTextWidth(op) + 6;
   });
-  y = dibujarTabla(
-    doc, marginX, y,
-    [
-      { header: "EF", width: 12 },
-      { header: "Tipo de evidencia", width: 48 },
-      { header: "Archivo", width: 70 },
-      { header: "Subido", width: 25 },
-      { header: "Responsable", width: contentW - 12 - 48 - 70 - 25 },
-    ],
-    filasEvidencia,
-    { navy, navyDark, slate },
-    pageH,
-  );
+  return y + 5;
+}
 
-  // ── Anexo: las 23 preguntas, formato compacto ──
+function drawAnexoPreguntas(
+  doc: PdfDoc,
+  yInicial: number,
+  encuestaDetalle: EncuestaDetalle,
+  checkPageBreak: (yActual: number, alturaNecesaria: number) => number,
+): number {
+  let y = yInicial;
+  const colPreg = 10, colEF = 9, colDist = 30, colResult = 24;
+  const colTexto = CONTENT_W - colPreg - colEF - colDist - colResult;
+
+  const headerH = 6;
+  const dibujarEncabezado = () => {
+    fill(doc, COLOR.maroon);
+    doc.rect(MARGIN_X, y, CONTENT_W, headerH, "F");
+    fuente(doc, "monoMedium", 5.6, COLOR.white);
+    let cx = MARGIN_X;
+    [["PREG.", colPreg], ["EF", colEF], ["ENUNCIADO", colTexto], ["DISTRIBUCIÓN", colDist], ["RESULTADO", colResult]].forEach(([h, w], i) => {
+      doc.text(h as string, cx + 3, y + 4, i === 4 ? { align: "right" } : {});
+      cx += w as number;
+    });
+    y += headerH;
+  };
+  dibujarEncabezado();
+
+  encuestaDetalle.preguntas.forEach((p, i) => {
+    const textoPregunta = p.texto ?? "(pregunta no encontrada en la encuesta actual)";
+    const lineasTexto = doc.splitTextToSize(textoPregunta, colTexto - 5);
+    const rowH = Math.max(lineasTexto.length * 3.2 + 3.5, 8);
+
+    const yNueva = checkPageBreak(y, rowH);
+    if (yNueva !== y) { y = yNueva; dibujarEncabezado(); }
+
+    fill(doc, i % 2 === 1 ? COLOR.white : COLOR.rowAlt);
+    doc.rect(MARGIN_X, y, CONTENT_W, rowH, "F");
+
+    let cx = MARGIN_X;
+    fuente(doc, "monoMedium", 7, COLOR.ink);
+    doc.text(`P${p.numero}`, cx + 3, y + rowH / 2 + 1);
+    cx += colPreg;
+
+    const marcador = p.es_ef1 ? "EF1" : p.es_ef4 ? "EF4" : "N/A";
+    fuente(doc, "monoMedium", 7, p.es_ef1 || p.es_ef4 ? COLOR.maroon : COLOR.ink3);
+    doc.text(marcador, cx + 3, y + rowH / 2 + 1);
+    cx += colEF;
+
+    fuente(doc, "sans", 7.2, COLOR.ink);
+    doc.text(lineasTexto, cx + 3, y + 3.8);
+    cx += colTexto;
+
+    const total = p.total;
+    const dom = opcionDominante(p.conteos, total);
+    drawDistBar(doc, cx + 3, y + rowH / 2 - 0.7, colDist - 6, 1.4, p.conteos, total);
+    cx += colDist;
+
+    if (dom) {
+      fuente(doc, "sansBold", 6.8, FREQ_COLOR[dom.label]);
+      doc.text(dom.label, MARGIN_X + CONTENT_W - 3, y + rowH / 2, { align: "right" });
+      fuente(doc, "mono", 5.4, COLOR.ink3);
+      doc.text(`${dom.pct}% · n=${total}`, MARGIN_X + CONTENT_W - 3, y + rowH / 2 + 2.8, { align: "right" });
+    } else {
+      fuente(doc, "sansItalic", 6.5, COLOR.ink3);
+      doc.text("Sin respuestas", MARGIN_X + CONTENT_W - 3, y + rowH / 2 + 0.8, { align: "right" });
+    }
+
+    stroke(doc, COLOR.rule);
+    doc.setLineWidth(0.08);
+    doc.line(MARGIN_X, y + rowH, MARGIN_X + CONTENT_W, y + rowH);
+    y += rowH;
+  });
+
+  return y;
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// Construcción del documento completo (testable: no depende del navegador).
+// ══════════════════════════════════════════════════════════════════════════
+export interface DatosPdfIndicador2 {
+  asignatura: ResultadoAsignatura;
+  cohortLabel: string;
+  paoNumero: number;
+  encuestaDetalle: EncuestaDetalle;
+}
+
+export async function construirDocumentoIndicador2(datos: DatosPdfIndicador2): Promise<PdfDoc> {
+  const { asignatura, cohortLabel, paoNumero, encuestaDetalle } = datos;
+
+  const { default: jsPDF } = await import("jspdf");
+  const doc: PdfDoc = new jsPDF({ unit: "mm", format: "a4" });
+  registrarFuentes(doc);
+
+  let paginaActual = 1;
+  drawFondoPapel(doc);
+  drawFooter(doc);
+
+  function checkPageBreak(yActual: number, alturaNecesaria: number): number {
+    if (yActual + alturaNecesaria > PAGE_H - MARGIN_BOTTOM - 4) {
+      doc.addPage();
+      paginaActual += 1;
+      drawFondoPapel(doc);
+      drawRunHeader(doc, paginaActual);
+      drawFooter(doc);
+      return CONT_HEADER_BOTTOM_Y;
+    }
+    return yActual;
+  }
+
+  // ── Página 1 ──
+  let y = drawMasthead(doc, asignatura, cohortLabel, paoNumero);
+
+  y = dividerConTitulo(doc, MARGIN_X, y, CONTENT_W, "Resultado general");
+  y = drawResultadoGeneral(doc, y, asignatura);
+
+  y = dividerConTitulo(doc, MARGIN_X, y, CONTENT_W, "Elementos fundamentales y fuentes de evidencia");
+  y = drawTablaEFs(doc, y, asignatura, encuestaDetalle, checkPageBreak);
+  y = drawLeyendaEstados(doc, y);
+
+  y = dividerConTitulo(doc, MARGIN_X, y, CONTENT_W, "Detalle de la encuesta de heteroevaluación");
+  y = drawSectionSub(doc, MARGIN_X, y, CONTENT_W, `Preguntas que alimentan EF1 y EF4 · respuestas consideradas para esta asignatura: ${encuestaDetalle.respuestas_totales_materia}.`);
+  y = drawDetalleEncuesta(doc, y, encuestaDetalle, checkPageBreak);
+
+  y = drawValidityNote(doc, y);
+
+  // ── Página(s) de anexo: las 23 preguntas ──
   doc.addPage();
-  y = 15;
-  y = drawSectionHeader(
-    doc, "Anexo — Las 23 preguntas de la encuesta de heteroevaluación",
-    "Distribución de respuestas por pregunta. Las preguntas marcadas con EF alimentan directamente el cálculo del indicador.",
-    marginX, y, contentW, navyDark, slate,
-  );
+  paginaActual += 1;
+  drawFondoPapel(doc);
+  drawRunHeader(doc, paginaActual);
+  drawFooter(doc);
+  y = CONT_HEADER_BOTTOM_Y;
 
-  encuestaDetalle.preguntas.forEach((p) => {
-    const marcador = p.es_ef1 ? "  EF1" : p.es_ef4 ? "  EF4" : "";
-    const textoPregunta = p.texto ?? "(pregunta no encontrada en la encuesta actual)";
-    const lineasTexto = doc.splitTextToSize(textoPregunta, contentW);
-    const dom = opcionDominante(p.conteos, p.total);
-    const lineaResultado = dom ? `Respuesta registrada: ${dom.label} (${dom.pct}%)` : "Sin respuestas para esta materia";
-    const alturaBloque = 4 + lineasTexto.length * 3.9 + 4.5 + 4;
+  y = dividerConTitulo(doc, MARGIN_X, y, CONTENT_W, "Anexo — Las 23 preguntas de la encuesta de heteroevaluación");
+  y = drawSectionSub(doc, MARGIN_X, y, CONTENT_W, "Distribución de respuestas por pregunta. Las filas marcadas con EF alimentan directamente el cálculo del indicador.");
+  y = drawLeyendaFrecuencias(doc, y);
+  drawAnexoPreguntas(doc, y, encuestaDetalle, checkPageBreak);
 
-    checkPageBreak(alturaBloque);
-    doc.setFont("courier", "bold");
-    doc.setFontSize(8);
-    doc.setTextColor(navy[0], navy[1], navy[2]);
-    doc.text(`P${p.numero}${marcador}`, marginX, y);
-    y += 4;
+  return doc;
+}
 
-    doc.setFont("times", "normal");
-    doc.setFontSize(8.5);
-    doc.setTextColor(navyDark[0], navyDark[1], navyDark[2]);
-    doc.text(lineasTexto, marginX, y);
-    y += lineasTexto.length * 3.9;
+// ══════════════════════════════════════════════════════════════════════════
+// API pública usada por la app (IndicatorView.tsx).
+// ══════════════════════════════════════════════════════════════════════════
+export interface ExportarPdfIndicador2Params extends DatosPdfIndicador2 {}
 
-    doc.setFont("courier", "normal");
-    doc.setFontSize(7.5);
-    doc.setTextColor(dom ? slate[0] : rojoSinEvidencia[0], dom ? slate[1] : rojoSinEvidencia[1], dom ? slate[2] : rojoSinEvidencia[2]);
-    doc.text(lineaResultado, marginX, y + 3.5);
-    y += 4 + 4;
-  });
-
-  doc.save(`indicador_11.2_${asignatura.nombre_asignatura.replace(/\s+/g, "_")}.pdf`);
+export async function exportarPdfIndicador2(params: ExportarPdfIndicador2Params): Promise<void> {
+  const doc = await construirDocumentoIndicador2(params);
+  doc.save(`indicador_11.2_${params.asignatura.nombre_asignatura.replace(/\s+/g, "_")}.pdf`);
 }

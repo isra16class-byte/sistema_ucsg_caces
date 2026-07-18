@@ -223,21 +223,14 @@ function TabResults({ ind, career, cohort, pao }: { ind: IndicatorDef; career: C
     setExportando(true);
     try {
       const cohorteNormalizada = cohort.replace(/\s+/g, "").toUpperCase();
-      const idIndicador = Number(ind.id.replace(/\D/g, ""));
 
       const evaluacion = await obtenerEvaluacion(career.code, cohorteNormalizada);
-
-      const [guardadas, compartidas, encuestaDetalle] = await Promise.all([
-        obtenerEvidenciasGuardadas(evaluacion.id_evaluacion, idIndicador),
-        obtenerEvidenciasCompartidas(evaluacion.id_evaluacion, idIndicador),
-        obtenerEncuestaDetalle(asig.id_asignatura, evaluacion.id_evaluacion),
-      ]);
+      const encuestaDetalle = await obtenerEncuestaDetalle(asig.id_asignatura, evaluacion.id_evaluacion);
 
       await exportarPdfIndicador2({
         asignatura: asig,
         cohortLabel: cohort,
         paoNumero: pao,
-        evidencias: [...guardadas, ...compartidas],
         encuestaDetalle,
       });
     } catch (e) {
@@ -377,7 +370,7 @@ function TabResults({ ind, career, cohort, pao }: { ind: IndicatorDef; career: C
           <div className="flex items-center gap-1.5 flex-shrink-0 mt-0.5">
             <AlertCircle size={10} style={{ color: "#94A3B8", flexShrink: 0 }} />
             <p style={{ color: "#94A3B8", fontSize: 10 }}>
-              EF1 y EF4 calculados en vivo desde Google Forms ({asig?.respuestas ?? 0} respuestas) · EF2, EF3, EF5 desde evidencia subida en la pestaña Evidencias.
+              Calculado desde los archivos subidos en la pestaña Evidencias: EF1 y EF4 desde el CSV de resultados de encuesta ({asig?.respuestas ?? 0} respuestas) · EF2, EF3, EF5 desde la evidencia documental.
             </p>
           </div>
         </div>
