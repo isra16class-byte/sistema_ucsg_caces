@@ -50,8 +50,10 @@ import {
   obtenerPeriodos,
   obtenerResultadoCohorte,
   obtenerEncuestaDetalle,
+  obtenerEvidenciaAsignatura,
   type ResultadoAsignatura,
   type ResultadoCohorte,
+  type EvidenciaAsignaturaItem,
 } from "../services/seguimientoSyllabus";
 
 import { exportarPdfIndicador2 } from "../lib/exportarPdfIndicador2";
@@ -71,11 +73,12 @@ export default function IndicatorView({ indicator, onBack, career, cohort, pao, 
   onUpload?: () => void;
   puedeCargar: boolean;
 }) {
-  const isTitDes = indicator.id === "I4" || indicator.id === "I5";
+    const isTitDes = indicator.id === "I4" || indicator.id === "I5";
   const isI2 = indicator.id === "I2";
   const isI3 = indicator.id === "I3";
   const defaultTab: TabId = (isI2 || isI3) ? "results" : isTitDes ? "cohorts" : "evidences";
   const [tab, setTab] = useState<TabId>(defaultTab);
+  const [idAsignaturaSeleccionada, setIdAsignaturaSeleccionada] = useState<number | null>(null);
   const pct = calcRate(indicator.cohorts);
   const s = getStatus(pct);
 
@@ -117,7 +120,7 @@ export default function IndicatorView({ indicator, onBack, career, cohort, pao, 
 
 
       <div className="flex-1 overflow-hidden min-h-0">
-        {tab === "results"   && isI2  && <TabResults    ind={indicator} career={career} cohort={cohort} pao={pao} />}
+                {tab === "results"   && isI2  && <TabResults    ind={indicator} career={career} cohort={cohort} pao={pao} onAsignaturaChange={(id) => setIdAsignaturaSeleccionada(id)}/>}
         {tab === "results"   && isI3  && <TabResultsI3  ind={indicator} career={career} cohort={cohort} pao={pao} />}
         {tab === "cohorts" && (
           <TabCohorts
@@ -126,11 +129,12 @@ export default function IndicatorView({ indicator, onBack, career, cohort, pao, 
             cohort={cohort}
           />
         )}
-        {tab === "evidences" && (
+                {tab === "evidences" && (
           <TabEvidences
             ind={indicator}
             career={career}
             cohort={cohort}
+            idAsignatura={idAsignaturaSeleccionada}
             onUpload={onUpload}
             puedeCargar={puedeCargar}
           />
@@ -154,7 +158,7 @@ const EF_META = [
 // ── Tab Resultados (I2 – Seguimiento de Syllabus) ──────────────────────────
 // Solo lectura: la carga/reemplazo de evidencia se hace en la pestaña
 // "Evidencias" (mecanismo genérico de slots), no aquí.
-function TabResults({ ind, career, cohort, pao }: { ind: IndicatorDef; career: Career | null; cohort: string; pao: number }) {
+function TabResults({ ind, career, cohort, pao, onAsignaturaChange }: { ind: IndicatorDef;career: Career | null; cohort: string; pao: number; onAsignaturaChange?: (idAsignatura: number | null) => void }) {
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [resultadoCohorte, setResultadoCohorte] = useState<ResultadoCohorte | null>(null);
@@ -163,6 +167,12 @@ function TabResults({ ind, career, cohort, pao }: { ind: IndicatorDef; career: C
 
   const detalle = resultadoCohorte?.detalle_asignaturas ?? [];
   const asig: ResultadoAsignatura | undefined = detalle[Math.min(selectedAsig, detalle.length - 1)];
+
+  // Notificar al padre cuando cambie la asignatura seleccionada
+  useEffect(() => {
+    const id = asig?.id_asignatura ?? null;
+    onAsignaturaChange?.(id);
+  }, [selectedAsig, resultadoCohorte]);
 
   // Resuelve evaluación (id_evaluacion, id_cohorte), el PAO real, y trae
   // de una sola llamada el resultado EF1-EF5 de todas las asignaturas de ese PAO.
@@ -829,16 +839,25 @@ function TabCohorts({
 }
 
 // ── Tab Evidencias (split view) ────────────────────────────────────────────
+// Mapeo de sourceNum de I2 a tipo en evidencia_asignatura
+const I2_SOURCE_NUM_TO_TIPO: Record<number, string> = {
+  2: "acta_retroalimentacion",
+  3: "acta_ajuste_curricular",
+  4: "evidencia_difusion",
+};
+
 function TabEvidences({
   ind,
   career,
   cohort,
+  idAsignatura,
   onUpload,
   puedeCargar,
 }: {
   ind: IndicatorDef;
   career: Career | null;
   cohort: string;
+  idAsignatura: number | null;
   onUpload?: () => void;
   puedeCargar: boolean;
 }) {
@@ -863,7 +882,7 @@ function TabEvidences({
     );
   }, [ind]);
 
-  useEffect(() => {
+    useEffect(() => {
     let cancelado = false;
 
     async function cargarEvidencias() {
@@ -890,7 +909,10 @@ function TabEvidences({
           ind.id.replace(/\D/g, ""),
         );
 
-        const [guardadas, compartidas] =
+        // Para I2, ademas de las tablas viejas (evidencias), traemos
+        // tambien la evidencia por asignatura (evidencia_asignatura)
+        // para los slots 2-4 que se suben a la tabla real.
+        const [guardadas, compartidas, evidenciaAsignatura] =
           await Promise.all([
             obtenerEvidenciasGuardadas(
               evaluacion.id_evaluacion,
@@ -900,6 +922,10 @@ function TabEvidences({
               evaluacion.id_evaluacion,
               idIndicador,
             ),
+            // Solo para I2 con asignatura resuelta
+            (ind.id === "I2" && idAsignatura !== null)
+              ? obtenerEvidenciaAsignatura(idAsignatura)
+              : Promise.resolve(null),
           ]);
 
         if (cancelado) {
@@ -910,6 +936,41 @@ function TabEvidences({
         
           let propia;
 let compartida;
+
+// ── I2 slots 2-4: usar evidencia_asignatura (tabla real) ──
+// Nota: la condicion depende del MAPEO (slot de I2), no de si
+// evidenciaAsignatura vino con datos. Si idAsignatura todavia no
+// resolvio (evidenciaAsignatura === null), estos slots deben mostrarse
+// como "sin archivo" -- nunca caer al fallback viejo (tabla `evidencias`,
+// evaluacion-wide), que es exactamente el bug que se esta arreglando.
+if (
+  ind.id === "I2" &&
+  I2_SOURCE_NUM_TO_TIPO[slot.sourceNum] !== undefined
+) {
+  const tipo = I2_SOURCE_NUM_TO_TIPO[slot.sourceNum];
+  const item = evidenciaAsignatura?.find(
+    (e: EvidenciaAsignaturaItem) => e.tipo === tipo,
+  );
+
+  if (item && item.subida && item.archivo) {
+    return {
+      ...slot,
+      file: {
+        originalName: item.archivo.nombre_archivo,
+        fileName: item.archivo.nombre_archivo,
+        url: item.archivo.url_archivo,
+        serverUrl: item.archivo.url_archivo,
+        size: 0,
+      } as NonNullable<typeof slot.file>,
+    };
+  }
+
+  // Si no hay evidencia en la tabla real, mostrar como sin archivo
+  return {
+    ...slot,
+    file: undefined,
+  };
+}
 
 /*
  * En Tasa de Titulación el orden visual es:
@@ -953,9 +1014,9 @@ if (
   /*
    * El slot 1 de I2 ("Syllabus") es compartido desde I1
    * (DOC.SYL.02). No se puede emparejar por `orden` porque
-   * I2 también tiene su propia fila de catálogo con orden=1
+   * I2 tambien tiene su propia fila de catalogo con orden=1
    * (DOC.SEG.01, Reglamento/Normativa institucional, EF5),
-   * que todavía no tiene slot visible en el wizard.
+   * que todavia no tiene slot visible en el wizard.
    */
   propia = guardadas.find(
     (evidencia) =>
@@ -1040,7 +1101,7 @@ const evidencia = propia ?? compartida;
             description:
               error instanceof Error
                 ? error.message
-                : "Ocurrió un error inesperado.",
+                : "Ocurrio un error inesperado.",
           },
         );
       } finally {
@@ -1055,7 +1116,7 @@ const evidencia = propia ?? compartida;
     return () => {
       cancelado = true;
     };
-  }, [career, cohort, ind]);
+  }, [career, cohort, ind, idAsignatura]);
 
   const selectedSlot = slots.find(
     (slot) => slot.sourceNum === selected,

@@ -33,6 +33,7 @@ import {
 
 import {
   subirEvidenciaAsignatura,
+  obtenerEvidenciaAsignatura,
   obtenerAsignaturas,
   obtenerPeriodos,
 } from "../services/seguimientoSyllabus";
@@ -73,12 +74,19 @@ export default function EvidenceUploadView({ career, indicators, onChange, onBac
   };
   const [asignaturaId, setAsignaturaId] = useState<number | null>(null);
 
+
   useEffect(() => {
     if (indicatorId !== "I2" || !pao || !cohort) {
       setAsignaturaId(null);
       return;
     }
 
+    // Se limpia de inmediato (sin esperar la resolucion async) para que el guard
+    // de procesarPdf (asignaturaId === null) bloquee la subida mientras se resuelve
+    // la nueva asignatura. Antes de este fix, el valor de la materia previa quedaba
+    // vigente durante toda la ventana de la promesa (ver MEMORIA v13 seccion 32,
+    // punto b: escritura confirmada bajo id_asignatura incorrecto sin error visible).
+    setAsignaturaId(null);
     let cancelado = false;
 
     async function resolverAsignatura() {
@@ -274,7 +282,7 @@ useEffect(() => {
     setCatalogoError("");
 
     try {
-      if (indicatorId === "I2") {
+            if (indicatorId === "I2") {
         // --- I2: combina catálogo propio + syllabus compartido de I1 ---
         const [catalogoI2, catalogoI1, evaluacion] = await Promise.all([
           obtenerCatalogoEvidencias(2),
@@ -295,6 +303,16 @@ useEffect(() => {
             2,
           ),
         ]);
+
+        // Para I2 slots 2-4: cargar evidencia real desde evidencia_asignatura
+        let evidenciaAsignatura = null;
+        if (asignaturaId !== null) {
+          try {
+            evidenciaAsignatura = await obtenerEvidenciaAsignatura(asignaturaId);
+          } catch {
+            // Si falla la consulta, seguir con lo que haya en la tabla vieja
+          }
+        }
 
         if (!activo) {
           return;
@@ -351,7 +369,31 @@ useEffect(() => {
                   };
                 }
 
-                // Slots 2,3,4: se llenan desde el catálogo propio de I2
+                // Slots 2,3,4: priorizar evidencia_asignatura (tabla real)
+                const slotTipo = I2_SLOT_TIPO[slot.sourceNum];
+                if (
+                  slotTipo !== undefined &&
+                  evidenciaAsignatura
+                ) {
+                  const item = evidenciaAsignatura.find(
+                    (e: any) => e.tipo === slotTipo,
+                  );
+
+                  if (item && item.subida && item.archivo) {
+                    return {
+                      ...slot,
+                      file: {
+                        fileName: item.archivo.nombre_archivo,
+                        originalName: item.archivo.nombre_archivo,
+                        url: item.archivo.url_archivo,
+                        serverUrl: item.archivo.url_archivo,
+                        size: 0,
+                      },
+                    };
+                  }
+                }
+
+                // Slots 2,3,4: llenar desde el catálogo propio de I2 (fallback a tabla vieja)
                 const evidencia = catalogoI2.find(
                   (item) => item.orden === slot.sourceNum,
                 );
@@ -483,7 +525,11 @@ useEffect(() => {
   return () => {
     activo = false;
   };
-}, [indicatorId, cohort]);
+  // asignaturaId agregado a las deps: sin esto, este efecto corre una sola vez
+  // al entrar a configSyllabus (antes de elegir PAO/materia), cuando asignaturaId
+  // todavia es null, y nunca se vuelve a ejecutar cuando la asignatura se resuelve
+  // -- el fetch a evidencia_asignatura de mas abajo casi nunca llegaba a correr.
+}, [indicatorId, cohort, asignaturaId]);
 
 useEffect(() => {
   if (indicatorId !== "I4" || !cohort) {
@@ -647,6 +693,8 @@ useEffect(() => {
     );
     return;
   }
+
+
 
     const esCsv = slot.acceptedType === "csv";
 
