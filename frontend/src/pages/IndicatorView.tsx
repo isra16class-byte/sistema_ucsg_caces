@@ -48,9 +48,12 @@ import {
 import {
   obtenerPeriodos,
   obtenerResultadoCohorte,
+  obtenerEncuestaDetalle,
   type ResultadoAsignatura,
   type ResultadoCohorte,
 } from "../services/seguimientoSyllabus";
+
+import { exportarPdfIndicador2 } from "../lib/exportarPdfIndicador2";
 
 import type {
   Career,
@@ -155,6 +158,7 @@ function TabResults({ ind, career, cohort, pao }: { ind: IndicatorDef; career: C
   const [error, setError] = useState<string | null>(null);
   const [resultadoCohorte, setResultadoCohorte] = useState<ResultadoCohorte | null>(null);
   const [selectedAsig, setSelectedAsig] = useState(0);
+  const [exportando, setExportando] = useState(false);
 
   const detalle = resultadoCohorte?.detalle_asignaturas ?? [];
   const asig: ResultadoAsignatura | undefined = detalle[Math.min(selectedAsig, detalle.length - 1)];
@@ -213,6 +217,35 @@ function TabResults({ ind, career, cohort, pao }: { ind: IndicatorDef; career: C
   const totalGeneral = resultadoCohorte?.valoracion_general ?? null;
   const totalAsignatura = asig?.valoracion_general ?? null;
   const radarData = efScores.map((ef) => ({ subject: ef.id, score: ef.pct ?? 0, fullMark: 100 }));
+
+  async function handleExportarPDF() {
+    if (!asig || !career) return;
+    setExportando(true);
+    try {
+      const cohorteNormalizada = cohort.replace(/\s+/g, "").toUpperCase();
+      const idIndicador = Number(ind.id.replace(/\D/g, ""));
+
+      const evaluacion = await obtenerEvaluacion(career.code, cohorteNormalizada);
+
+      const [guardadas, compartidas, encuestaDetalle] = await Promise.all([
+        obtenerEvidenciasGuardadas(evaluacion.id_evaluacion, idIndicador),
+        obtenerEvidenciasCompartidas(evaluacion.id_evaluacion, idIndicador),
+        obtenerEncuestaDetalle(asig.id_asignatura),
+      ]);
+
+      await exportarPdfIndicador2({
+        asignatura: asig,
+        cohortLabel: cohort,
+        paoNumero: pao,
+        evidencias: [...guardadas, ...compartidas],
+        encuestaDetalle,
+      });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "No se pudo generar el PDF.");
+    } finally {
+      setExportando(false);
+    }
+  }
 
   // EF cells – label as title, id as subtitle, percentage only
   function EfCell({ ef }: { ef: typeof efScores[0] }) {
@@ -353,10 +386,13 @@ function TabResults({ ind, career, cohort, pao }: { ind: IndicatorDef; career: C
         <div className="flex justify-end px-4 py-2.5 flex-shrink-0"
           style={{ borderTop: "1px solid rgba(27,58,107,0.07)" }}>
           <button
-            onClick={() => toast.success(`Exportando "${asig?.nombre_asignatura ?? ""}" a PDF…`, { description: "El reporte se descargará en breve." })}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-xl font-bold transition-all hover:opacity-90 active:scale-95"
+            onClick={handleExportarPDF}
+            disabled={exportando || !asig}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-xl font-bold transition-all hover:opacity-90 active:scale-95 disabled:opacity-60"
             style={{ background: "#1B3A6B", color: "#fff", fontSize: 12 }}>
-            <Download size={12} /> Exportar PDF
+            {exportando
+              ? <><Loader2 size={12} className="animate-spin" /> Generando…</>
+              : <><Download size={12} /> Exportar PDF</>}
           </button>
         </div>
       </div>

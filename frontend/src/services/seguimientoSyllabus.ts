@@ -100,6 +100,28 @@ export function obtenerEvidenciaAsignatura(idAsignatura: number): Promise<Eviden
   return getJson(`${BASE}/evidencia_asignatura_listar.php?id_asignatura=${idAsignatura}`);
 }
 
+// ── Detalle de encuesta de heteroevaluación (23 preguntas) ──────────────
+// Alimenta el export de PDF: preguntas EF1/EF4 con conteo de respuestas por
+// materia, y el resto de las 23 para el anexo.
+export interface PreguntaEncuestaDetalle {
+  numero: number;
+  texto: string | null;
+  es_ef1: boolean;
+  es_ef4: boolean;
+  conteos: Record<string, number>;
+  total: number;
+}
+
+export interface EncuestaDetalle {
+  materia_filtrada: string | null;
+  respuestas_totales_materia: number;
+  preguntas: PreguntaEncuestaDetalle[];
+}
+
+export function obtenerEncuestaDetalle(idAsignatura: number): Promise<EncuestaDetalle> {
+  return getJson(`${BASE}/encuesta_detalle.php?id_asignatura=${idAsignatura}`);
+}
+
 export async function subirEvidenciaAsignatura(params: {
   idAsignatura: number;
   tipo: TipoEvidenciaAsignatura;
