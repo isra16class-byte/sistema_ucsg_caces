@@ -237,7 +237,10 @@ function drawMasthead(
     ["Docente", "Sin asignar", true],
     ["Cohorte", `Cohorte ${cohortLabel}`, false],
     ["PAO", `PAO ${paoNumero}`, false],
-    ["Generado", new Date().toLocaleString("es-EC", { day: "2-digit", month: "long", year: "numeric", hour: "numeric", minute: "2-digit" }), false],
+    // Formato corto ("18 jul 2026, 08:43") en vez del largo ("18 de julio de 2026
+    // a las 8:43 a. m.") — el largo se desbordaba fuera de su columna (1/4 del
+    // ancho de contenido) y hasta fuera del margen de página.
+    ["Generado", new Date().toLocaleString("es-EC", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }).replace(/\.$/, ""), false],
   ];
   meta.forEach(([label, valor, muted], i) => {
     const cx = MARGIN_X + i * colW;
@@ -253,6 +256,16 @@ function drawMasthead(
       fuente(doc, "sansItalic", 9.5, COLOR.ink3);
     } else {
       fuente(doc, "sansMedium", 9.5, COLOR.ink);
+    }
+    // Shrink-to-fit defensivo: si aun así el valor no entra en su columna
+    // (ej. un nombre de cohorte largo a futuro), se reduce el tamaño de
+    // fuente en vez de dejarlo desbordar sobre la columna siguiente.
+    const maxW = colW - (i > 0 ? 4 : 0) - 2;
+    let size = 9.5;
+    doc.setFontSize(size);
+    while (doc.getTextWidth(valor) > maxW && size > 6.5) {
+      size -= 0.5;
+      doc.setFontSize(size);
     }
     doc.text(valor, tx0, yFicha + 2.5);
   });
@@ -347,7 +360,9 @@ function drawTablaEFs(
     fuente(doc, "monoMedium", 6.3, COLOR.white);
     let cx = MARGIN_X;
     ["EF", "ELEMENTO FUNDAMENTAL Y FUENTE DE EVIDENCIA", "PESO", "RESULTADO"].forEach((h, i) => {
-      doc.text(h, cx + 3, y + 4.6, i === 3 ? { align: "right" } : {});
+      const alineadoDerecha = i === 3;
+      const tx = alineadoDerecha ? cx + cols[i].w - 3 : cx + 3;
+      doc.text(h, tx, y + 4.6, alineadoDerecha ? { align: "right" } : {});
       cx += cols[i].w;
     });
     y += headerH;
@@ -468,7 +483,9 @@ function drawDetalleEncuesta(
     fuente(doc, "monoMedium", 6, COLOR.white);
     let cx = MARGIN_X;
     [["PREG.", colPreg], ["EF", colEF], ["ENUNCIADO", colTexto], ["DISTRIBUCIÓN", colDist], ["RESULTADO", colResult]].forEach(([h, w], i) => {
-      doc.text(h as string, cx + 3, y + 4.4, i === 4 ? { align: "right" } : {});
+      const centrado = i === 4;
+      const tx = centrado ? cx + (w as number) / 2 : cx + 3;
+      doc.text(h as string, tx, y + 4.4, centrado ? { align: "center" } : {});
       cx += w as number;
     });
     y += headerH;
@@ -508,14 +525,18 @@ function drawDetalleEncuesta(
     drawDistBar(doc, cx + 3, y + rowH / 2 - 0.8, colDist - 6, 1.6, p.conteos, total);
     cx += colDist;
 
+    // Centrado sobre el eje de la columna Resultado (no right-align contra el
+    // margen de página): así el bloque de texto queda centrado como una unidad
+    // en vez de con el borde izquierdo irregular según el largo de cada palabra.
+    const centroResultado = cx + colResult / 2;
     if (dom) {
       fuente(doc, "sansBold", 7.5, FREQ_COLOR[dom.label]);
-      doc.text(dom.label, MARGIN_X + CONTENT_W - 3, y + rowH / 2, { align: "right" });
+      doc.text(dom.label, centroResultado, y + rowH / 2, { align: "center" });
       fuente(doc, "mono", 6, COLOR.ink3);
-      doc.text(`${dom.pct}% · n=${total}`, MARGIN_X + CONTENT_W - 3, y + rowH / 2 + 3, { align: "right" });
+      doc.text(`${dom.pct}% · n=${total}`, centroResultado, y + rowH / 2 + 3, { align: "center" });
     } else {
       fuente(doc, "sansItalic", 7, COLOR.ink3);
-      doc.text("Sin respuestas", MARGIN_X + CONTENT_W - 3, y + rowH / 2 + 1, { align: "right" });
+      doc.text("Sin respuestas", centroResultado, y + rowH / 2 + 1, { align: "center" });
     }
 
     stroke(doc, COLOR.rule);
@@ -564,7 +585,9 @@ function drawAnexoPreguntas(
     fuente(doc, "monoMedium", 5.6, COLOR.white);
     let cx = MARGIN_X;
     [["PREG.", colPreg], ["EF", colEF], ["ENUNCIADO", colTexto], ["DISTRIBUCIÓN", colDist], ["RESULTADO", colResult]].forEach(([h, w], i) => {
-      doc.text(h as string, cx + 3, y + 4, i === 4 ? { align: "right" } : {});
+      const centrado = i === 4;
+      const tx = centrado ? cx + (w as number) / 2 : cx + 3;
+      doc.text(h as string, tx, y + 4, centrado ? { align: "center" } : {});
       cx += w as number;
     });
     y += headerH;
@@ -601,14 +624,15 @@ function drawAnexoPreguntas(
     drawDistBar(doc, cx + 3, y + rowH / 2 - 0.7, colDist - 6, 1.4, p.conteos, total);
     cx += colDist;
 
+    const centroResultado = cx + colResult / 2;
     if (dom) {
       fuente(doc, "sansBold", 6.8, FREQ_COLOR[dom.label]);
-      doc.text(dom.label, MARGIN_X + CONTENT_W - 3, y + rowH / 2, { align: "right" });
+      doc.text(dom.label, centroResultado, y + rowH / 2, { align: "center" });
       fuente(doc, "mono", 5.4, COLOR.ink3);
-      doc.text(`${dom.pct}% · n=${total}`, MARGIN_X + CONTENT_W - 3, y + rowH / 2 + 2.8, { align: "right" });
+      doc.text(`${dom.pct}% · n=${total}`, centroResultado, y + rowH / 2 + 2.8, { align: "center" });
     } else {
       fuente(doc, "sansItalic", 6.5, COLOR.ink3);
-      doc.text("Sin respuestas", MARGIN_X + CONTENT_W - 3, y + rowH / 2 + 0.8, { align: "right" });
+      doc.text("Sin respuestas", centroResultado, y + rowH / 2 + 0.8, { align: "center" });
     }
 
     stroke(doc, COLOR.rule);
