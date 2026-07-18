@@ -25,8 +25,45 @@ function _rutaCacheCsv(): string
     return sys_get_temp_dir() . '/seguimiento_syllabus_encuesta_cache.csv';
 }
 
+// TTL del caché en disco, en segundos. Los datos de la encuesta no cambian
+// minuto a minuto, así que mientras el archivo en disco tenga menos de esta
+// antigüedad, se usa directamente sin pegarle a Google Sheets. Subir este
+// valor = menos descargas pero datos potencialmente más "viejos" en pantalla
+// (nunca más viejos que este número de segundos).
+const TTL_CACHE_CSV_SEGUNDOS = 60;
+
 function descargarCsvEncuesta(): ?array
 {
+    // Memoización por petición: calcularResultadoGeneral() llama a esta función
+    // una vez por cada asignatura del PAO (vía calcularEfDesdeCsv), lo que antes
+    // significaba N descargas HTTP idénticas a Google Sheets por cada carga de
+    // pantalla. El static vive solo durante esta petición PHP (cada worker de
+    // PHP-FPM lo reinicia en la siguiente request), así que no hay riesgo de
+    // servir un CSV desactualizado en una carga posterior -- solo evita repetir
+    // el trabajo dentro de la misma petición.
+    static $resultado = null;
+    static $yaConsultado = false;
+
+    if ($yaConsultado) {
+        return $resultado;
+    }
+    $yaConsultado = true;
+
+    $rutaCache = _rutaCacheCsv();
+
+    // Caché primario en disco con TTL: si el archivo existe y su antigüedad es
+    // menor al TTL, se usa directo sin tocar la red. Esto beneficia a
+    // peticiones PHP distintas (las 3 llamadas en paralelo del dashboard por
+    // PAO, o recargas seguidas de la página), no solo llamadas repetidas
+    // dentro de la misma petición.
+    if (is_readable($rutaCache) && (time() - filemtime($rutaCache)) < TTL_CACHE_CSV_SEGUNDOS) {
+        $cacheContenido = file_get_contents($rutaCache);
+        if ($cacheContenido !== false) {
+            $resultado = ['filas' => parseCsvString($cacheContenido), 'degradado' => false];
+            return $resultado;
+        }
+    }
+
     $ctx = stream_context_create([
         'http' => ['timeout' => 10, 'header' => "User-Agent: Mozilla/5.0\r\n"],
     ]);
@@ -34,19 +71,26 @@ function descargarCsvEncuesta(): ?array
     $contenido = @file_get_contents(URL_CSV_ENCUESTA, false, $ctx);
 
     if ($contenido !== false) {
-        @file_put_contents(_rutaCacheCsv(), $contenido);
-        return ['filas' => parseCsvString($contenido), 'degradado' => false];
+        @file_put_contents($rutaCache, $contenido);
+        $resultado = ['filas' => parseCsvString($contenido), 'degradado' => false];
+        return $resultado;
     }
 
     error_log('seguimiento_syllabus: no se pudo descargar el CSV de la encuesta, intentando cache.');
 
-    $rutaCache = _rutaCacheCsv();
+    // A esta altura el caché no pasó el chequeo de TTL de arriba (o no existe),
+    // pero como último recurso ante una descarga fallida, se usa aunque esté
+    // vencido -- mejor datos "degradados" que ninguno.
     if (is_readable($rutaCache)) {
         $cacheContenido = file_get_contents($rutaCache);
-        return ['filas' => parseCsvString($cacheContenido), 'degradado' => true];
+        if ($cacheContenido !== false) {
+            $resultado = ['filas' => parseCsvString($cacheContenido), 'degradado' => true];
+            return $resultado;
+        }
     }
 
-    return null;
+    $resultado = null;
+    return $resultado;
 }
 
 function parseCsvString(string $contenido): array
