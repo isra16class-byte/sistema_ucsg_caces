@@ -217,7 +217,7 @@ function drawMasthead(
 
   let ty = MARGIN_TOP;
   fuente(doc, "mono", 7.2, COLOR.maroon);
-  doc.text("INDICADOR 11.2 · CACES", rightX, ty, { align: "right" });
+  doc.text("INDICADOR 11.2 - CACES", rightX, ty, { align: "right" });
   ty += 5.3;
   fuente(doc, "serifBold", 13.5, COLOR.ink);
   doc.text("Seguimiento de syllabus", rightX, ty, { align: "right" });
@@ -298,7 +298,7 @@ function drawFooter(doc: PdfDoc) {
   doc.setLineWidth(0.15);
   doc.line(MARGIN_X, y - 4, MARGIN_X + CONTENT_W, y - 4);
   fuente(doc, "sans", 7.2, COLOR.ink3);
-  doc.text("UCSG · Sistema de seguimiento académico", MARGIN_X, y);
+  doc.text("UCSG - Sistema de seguimiento académico", MARGIN_X, y);
   doc.text("Indicador 11.2 — Seguimiento de syllabus", MARGIN_X + CONTENT_W, y, { align: "right" });
 }
 
@@ -318,7 +318,7 @@ function drawResultadoGeneral(doc: PdfDoc, y: number, asignatura: ResultadoAsign
   doc.text((asignatura.escala ?? STATUS_LABEL.nodata).toUpperCase(), statusX + 2.6, y + 5.2);
 
   fuente(doc, "mono", 7, COLOR.ink3);
-  doc.text("Puntaje agregado · Indicador 11.2", MARGIN_X + CONTENT_W, y + 5.2, { align: "right" });
+  doc.text("Puntaje agregado - Indicador 11.2", MARGIN_X + CONTENT_W, y + 5.2, { align: "right" });
 
   const meterY = y + 12;
   fill(doc, COLOR.rule);
@@ -376,7 +376,7 @@ function drawTablaEFs(
     const statusKey = statusKeyDeValor(valor);
     const color = COLOR[statusKey];
 
-    // Preguntas de la encuesta que alimentan este EF (ref. "P5 · P8 · P13").
+    // Preguntas de la encuesta que alimentan este EF (ref. "P5 - P8 - P13").
     const numerosPregunta = key === "ef1" || key === "ef4"
       ? encuestaDetalle.preguntas.filter((p) => (key === "ef1" ? p.es_ef1 : p.es_ef4)).map((p) => `P${p.numero}`)
       : [];
@@ -385,7 +385,7 @@ function drawTablaEFs(
     const nombreLineas = doc.splitTextToSize(info.descripcion, cols[1].w - 5);
     fuente(doc, "sans", 7.4, COLOR.ink2);
     const fuenteTexto = numerosPregunta.length > 0
-      ? `Encuesta de heteroevaluación (${numerosPregunta.join(" · ")}) — ${info.fuente.replace(/^Encuesta de heteroevaluación,\s*/, "")}`
+      ? `Encuesta de heteroevaluación (${numerosPregunta.join(" - ")}) — ${info.fuente.replace(/^Encuesta de heteroevaluación,\s*/, "")}`
       : info.fuente;
     const fuenteLineas = doc.splitTextToSize(fuenteTexto, cols[1].w - 5);
     const rowH = Math.max(nombreLineas.length * 3.7 + fuenteLineas.length * 3.3 + 5, 10);
@@ -533,7 +533,7 @@ function drawDetalleEncuesta(
       fuente(doc, "sansBold", 7.5, FREQ_COLOR[dom.label]);
       doc.text(dom.label, centroResultado, y + rowH / 2, { align: "center" });
       fuente(doc, "mono", 6, COLOR.ink3);
-      doc.text(`${dom.pct}% · n=${total}`, centroResultado, y + rowH / 2 + 3, { align: "center" });
+      doc.text(`${dom.pct}% - n=${total}`, centroResultado, y + rowH / 2 + 3, { align: "center" });
     } else {
       fuente(doc, "sansItalic", 7, COLOR.ink3);
       doc.text("Sin respuestas", centroResultado, y + rowH / 2 + 1, { align: "center" });
@@ -552,7 +552,7 @@ function drawDetalleEncuesta(
 function drawValidityNote(doc: PdfDoc, y: number): number {
   drawDiamond(doc, MARGIN_X + 0.6, y + 1.1, 0.6, COLOR.maroon);
   fuente(doc, "monoMedium", 7, COLOR.ink3);
-  doc.text("Documento generado automáticamente por el sistema de seguimiento académico UCSG · No requiere firma.", MARGIN_X + 2.6, y + 1.6);
+  doc.text("Documento generado automáticamente por el sistema de seguimiento académico UCSG - No requiere firma.", MARGIN_X + 2.6, y + 1.6);
   return y + 6;
 }
 
@@ -629,7 +629,7 @@ function drawAnexoPreguntas(
       fuente(doc, "sansBold", 6.8, FREQ_COLOR[dom.label]);
       doc.text(dom.label, centroResultado, y + rowH / 2, { align: "center" });
       fuente(doc, "mono", 5.4, COLOR.ink3);
-      doc.text(`${dom.pct}% · n=${total}`, centroResultado, y + rowH / 2 + 2.8, { align: "center" });
+      doc.text(`${dom.pct}% - n=${total}`, centroResultado, y + rowH / 2 + 2.8, { align: "center" });
     } else {
       fuente(doc, "sansItalic", 6.5, COLOR.ink3);
       doc.text("Sin respuestas", centroResultado, y + rowH / 2 + 0.8, { align: "center" });
@@ -688,7 +688,7 @@ export async function construirDocumentoIndicador2(datos: DatosPdfIndicador2): P
   y = drawLeyendaEstados(doc, y);
 
   y = dividerConTitulo(doc, MARGIN_X, y, CONTENT_W, "Detalle de la encuesta de heteroevaluación");
-  y = drawSectionSub(doc, MARGIN_X, y, CONTENT_W, `Preguntas que alimentan EF1 y EF4 · respuestas consideradas para esta asignatura: ${encuestaDetalle.respuestas_totales_materia}.`);
+  y = drawSectionSub(doc, MARGIN_X, y, CONTENT_W, `Preguntas que alimentan EF1 y EF4 - respuestas consideradas para esta asignatura: ${encuestaDetalle.respuestas_totales_materia}.`);
   y = drawDetalleEncuesta(doc, y, encuestaDetalle, checkPageBreak);
 
   y = drawValidityNote(doc, y);
