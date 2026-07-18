@@ -24,6 +24,18 @@ if ($_SERVER["REQUEST_METHOD"] !== "POST") {
 
 require_once __DIR__ . "/drive_helpers.php";
 
+// Se lee ANTES del try (con default seguro) para que el catch siempre tenga
+// un valor, incluso si la excepción ocurre antes de llegar a la lectura
+// original del $_POST más abajo (p. ej. al fallar cliente_autorizado.php,
+// como cuando el cliente OAuth está deshabilitado del lado de Google).
+$tipoEsperado = trim(
+    $_POST["tipo_esperado"] ?? "pdf"
+);
+
+if (!in_array($tipoEsperado, ["pdf", "csv"], true)) {
+    $tipoEsperado = "pdf";
+}
+
 try {
     $cliente = require __DIR__ . "/cliente_autorizado.php";
     $drive = new Google\Service\Drive($cliente);
@@ -55,19 +67,6 @@ try {
     $nombreArchivo = trim(
         $_POST["nombre_archivo"] ?? ""
     );
-
-    // "pdf" (default, retrocompatible con todos los slots existentes) o
-    // "csv" para el slot de resultados de encuesta. No se consulta la BD
-    // aquí (este endpoint no depende de mysqli) -- se confía en lo que ya
-    // decidió el frontend a partir de slot.acceptedType, igual que ya se
-    // confía en el resto de los campos de este mismo formulario.
-    $tipoEsperado = trim(
-        $_POST["tipo_esperado"] ?? "pdf"
-    );
-
-    if (!in_array($tipoEsperado, ["pdf", "csv"], true)) {
-        $tipoEsperado = "pdf";
-    }
 
     if (
         $codigoCarrera === "" ||
