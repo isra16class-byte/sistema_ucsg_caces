@@ -31,6 +31,12 @@ import {
   MATERIAS_BY_PAO_MODULE,
 } from "../data/academic";
 
+import {
+  subirEvidenciaAsignatura,
+  obtenerAsignaturas,
+  obtenerPeriodos,
+} from "../services/seguimientoSyllabus";
+
 import type {
   Career,
   EvidStep,
@@ -58,6 +64,46 @@ export default function EvidenceUploadView({ career, indicators, onChange, onBac
   const [loadingCatalogo, setLoadingCatalogo] = useState(false);
   const [catalogoError, setCatalogoError] = useState("");
   const [guardando, setGuardando] = useState(false);
+
+  // ── Resolución de id_asignatura real para I2 ─────────────────────────
+  const I2_SLOT_TIPO: Record<number, string> = {
+    2: "acta_retroalimentacion",
+    3: "acta_ajuste_curricular",
+    4: "evidencia_difusion",
+  };
+  const [asignaturaId, setAsignaturaId] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (indicatorId !== "I2" || !pao || !cohort) {
+      setAsignaturaId(null);
+      return;
+    }
+
+    let cancelado = false;
+
+    async function resolverAsignatura() {
+      try {
+        const cohorteNorm = cohort.replace(/\s+/g, "");
+        const evaluacion = await obtenerEvaluacion(career.code, cohorteNorm);
+        const periodos = await obtenerPeriodos(evaluacion.id_cohorte);
+        const orden = Number(pao.replace(/\D/g, ""));
+        const periodo = periodos.find((p) => p.orden === orden);
+        if (!periodo) {
+          if (!cancelado) setAsignaturaId(null);
+          return;
+        }
+        const asignaturas = await obtenerAsignaturas(periodo.id_periodoacademico);
+        const match = asignaturas.find((a) => a.nombre === materia);
+        if (!cancelado) setAsignaturaId(match?.id_asignatura ?? null);
+      } catch {
+        if (!cancelado) setAsignaturaId(null);
+      }
+    }
+
+    resolverAsignatura();
+    return () => { cancelado = true; };
+  }, [indicatorId, pao, module, materia, cohort, career.code]);
+
   const indicator = indicators.find((i) => i.id === indicatorId);
   const isSyllabus = ["I1", "I2", "I3"].includes(indicatorId);
   useEffect(() => {
@@ -215,7 +261,7 @@ const ID_INDICADOR_NUM: Record<string, number> = {
 };
 
 useEffect(() => {
-  if (!["I1", "I2"].includes(indicatorId) || !cohort) {
+  if (!["I1", "I2", "I3"].includes(indicatorId) || !cohort) {
     return;
   }
 
@@ -602,7 +648,59 @@ useEffect(() => {
     return;
   }
 
-  const esCsv = slot.acceptedType === "csv";
+    const esCsv = slot.acceptedType === "csv";
+
+  // ── I2: slots 2-4 → subir a evidencia_asignatura (no a tabla evidencias) ──
+  if (
+    indicator.id === "I2" &&
+    I2_SLOT_TIPO[slot.sourceNum] !== undefined
+  ) {
+    if (asignaturaId === null) {
+      toast.error(
+        "No se pudo determinar la asignatura. Verifique la configuración de período y materia.",
+      );
+      return;
+    }
+
+    const tipo = I2_SLOT_TIPO[slot.sourceNum];
+    let activoSubida = true;
+
+    try {
+      const resultado = await subirEvidenciaAsignatura({
+        idAsignatura: asignaturaId,
+        tipo: tipo as any,
+        archivo,
+      });
+
+      if (!activoSubida) return;
+
+      updateSlot(indicator.id, {
+        ...slot,
+        error: undefined,
+        file: {
+          fileName: archivo.name,
+          originalName: archivo.name,
+          url: resultado.url_archivo,
+          serverUrl: resultado.url_archivo,
+          size: archivo.size,
+        },
+      });
+
+      toast.success("PDF guardado correctamente", {
+        description: "La evidencia se subió a Google Drive y se registró en la asignatura.",
+      });
+    } catch (error) {
+      if (!activoSubida) return;
+      updateSlot(indicator.id, {
+        ...slot,
+        error: error instanceof Error ? error.message : "No se pudo procesar el PDF.",
+      });
+      toast.error("No se pudo guardar el archivo", {
+        description: error instanceof Error ? error.message : "Ocurrió un error inesperado.",
+      });
+    }
+    return;
+  }
 
   try {
     /*
