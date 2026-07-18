@@ -56,6 +56,19 @@ try {
         $_POST["nombre_archivo"] ?? ""
     );
 
+    // "pdf" (default, retrocompatible con todos los slots existentes) o
+    // "csv" para el slot de resultados de encuesta. No se consulta la BD
+    // aquí (este endpoint no depende de mysqli) -- se confía en lo que ya
+    // decidió el frontend a partir de slot.acceptedType, igual que ya se
+    // confía en el resto de los campos de este mismo formulario.
+    $tipoEsperado = trim(
+        $_POST["tipo_esperado"] ?? "pdf"
+    );
+
+    if (!in_array($tipoEsperado, ["pdf", "csv"], true)) {
+        $tipoEsperado = "pdf";
+    }
+
     if (
         $codigoCarrera === "" ||
         $nombreCarrera === "" ||
@@ -127,20 +140,43 @@ try {
         $archivo["tmp_name"]
     );
 
-    if (
-        $extension !== "pdf" ||
-        $mime !== "application/pdf"
-    ) {
-        http_response_code(400);
+    // MIME types de CSV varían bastante según el programa que lo generó
+    // (Excel, Sheets, editor de texto), por eso se acepta un set en vez de
+    // uno solo -- misma idea que ya se usa en el validador del frontend.
+    $mimeCsvValidos = [
+        "text/csv",
+        "application/csv",
+        "application/vnd.ms-excel",
+        "text/plain",
+    ];
 
-        echo json_encode([
-            "ok" => false,
-            "mensaje" =>
-                "Solo se aceptan archivos PDF válidos."
-        ], JSON_UNESCAPED_UNICODE);
+    if ($tipoEsperado === "csv") {
+        if ($extension !== "csv" || !in_array($mime, $mimeCsvValidos, true)) {
+            http_response_code(400);
 
-        exit;
+            echo json_encode([
+                "ok" => false,
+                "mensaje" =>
+                    "Solo se aceptan archivos CSV válidos."
+            ], JSON_UNESCAPED_UNICODE);
+
+            exit;
+        }
+    } else {
+        if ($extension !== "pdf" || $mime !== "application/pdf") {
+            http_response_code(400);
+
+            echo json_encode([
+                "ok" => false,
+                "mensaje" =>
+                    "Solo se aceptan archivos PDF válidos."
+            ], JSON_UNESCAPED_UNICODE);
+
+            exit;
+        }
     }
+
+    $mimeSubida = $tipoEsperado === "csv" ? "text/csv" : "application/pdf";
 
     /*
      * Estructura final:
@@ -212,7 +248,7 @@ try {
                 ]),
                 [
                     "data" => $contenido,
-                    "mimeType" => "application/pdf",
+                    "mimeType" => $mimeSubida,
                     "uploadType" => "multipart",
                     "fields" =>
                         "id,name,webViewLink,webContentLink",
@@ -237,7 +273,7 @@ try {
                 $metadata,
                 [
                     "data" => $contenido,
-                    "mimeType" => "application/pdf",
+                    "mimeType" => $mimeSubida,
                     "uploadType" => "multipart",
                     "fields" =>
                         "id,name,webViewLink,webContentLink",
@@ -294,7 +330,7 @@ try {
     echo json_encode([
         "ok" => true,
         "mensaje" =>
-            "PDF {$accion} correctamente en Google Drive.",
+            ($tipoEsperado === "csv" ? "CSV" : "PDF") . " {$accion} correctamente en Google Drive.",
         "datos" => [
             "id_archivo" =>
                 $archivoDrive->getId(),
@@ -331,7 +367,7 @@ try {
     echo json_encode([
         "ok" => false,
         "mensaje" =>
-            "No se pudo subir el PDF a Google Drive.",
+            "No se pudo subir el " . ($tipoEsperado === "csv" ? "CSV" : "PDF") . " a Google Drive.",
         "detalle" =>
             $error->getMessage(),
     ], JSON_UNESCAPED_UNICODE);

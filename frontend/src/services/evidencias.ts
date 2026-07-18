@@ -342,6 +342,9 @@ interface SubirDriveParams {
   cohorte: string;
   indicador: number;
   nombreArchivo: string;
+  // "pdf" (default, retrocompatible con todos los slots existentes) o "csv"
+  // para el slot de resultados de encuesta.
+  tipoEsperado?: "pdf" | "csv";
 }
 
 export async function subirPdfGoogleDrive({
@@ -351,6 +354,7 @@ export async function subirPdfGoogleDrive({
   cohorte,
   indicador,
   nombreArchivo,
+  tipoEsperado = "pdf",
 }: SubirDriveParams): Promise<SubirDriveResponse> {
   const formulario = new FormData();
 
@@ -360,6 +364,7 @@ export async function subirPdfGoogleDrive({
   formulario.append("cohorte", cohorte);
   formulario.append("indicador", String(indicador));
   formulario.append("nombre_archivo", nombreArchivo);
+  formulario.append("tipo_esperado", tipoEsperado);
 
   const respuesta = await fetch(
     "http://localhost/sistemacaces/api/google_drive/subir_archivo.php",

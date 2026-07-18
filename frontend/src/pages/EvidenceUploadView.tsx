@@ -602,9 +602,11 @@ useEffect(() => {
     return;
   }
 
+  const esCsv = slot.acceptedType === "csv";
+
   try {
     /*
-     * 1. Validar el PDF y generar el nombre técnico.
+     * 1. Validar el archivo (PDF o CSV según el slot) y generar el nombre técnico.
      */
     const preparacion = await prepararPdf({
       archivo,
@@ -652,6 +654,7 @@ if (slot.codigoEvidencia === "DOC.TIT.02") {
       indicador: indicator.num,
       nombreArchivo:
         preparacion.datos.nombre_generado,
+      tipoEsperado: esCsv ? "csv" : "pdf",
     });
 
     const urlDrive =
@@ -757,7 +760,7 @@ if (
         slot.label,
       nombreArchivo:
         preparacion.datos.nombre_generado,
-      tipo: "application/pdf",
+      tipo: esCsv ? "text/csv" : "application/pdf",
       urlArchivo: urlDrive,
     });
 
@@ -786,7 +789,7 @@ if (
     });
 
     toast.success(
-      "PDF guardado correctamente",
+      esCsv ? "CSV guardado correctamente" : "PDF guardado correctamente",
       {
       description: resultadoTitulacion
       ? resultadoTitulacion.tasa !== null
@@ -1092,7 +1095,7 @@ if (
                 <PdfZone
                   key={slot.sourceNum}
                   slot={slot}
-                  fileName={`${career.code}.${cohort.replace(/\s+/g, "")}.C${career.criterionNum}.${indicator.num}.${slot.sourceNum}.${slot.nombreArchivoBase ?? "Evidencia"}.pdf`}
+                  fileName={`${career.code}.${cohort.replace(/\s+/g, "")}.C${career.criterionNum}.${indicator.num}.${slot.sourceNum}.${slot.nombreArchivoBase ?? "Evidencia"}.${slot.acceptedType === "csv" ? "csv" : "pdf"}`}
                   onChange={(updated) =>
                     updateSlot(indicator.id, updated)
                   }

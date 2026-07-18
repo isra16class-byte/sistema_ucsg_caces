@@ -31,6 +31,10 @@ export interface EvidenceSlot {
   sourceNum: number;
   label: string;
 
+  // Tipo de archivo que acepta este slot. Si no se especifica, se asume
+  // "pdf" (comportamiento histórico de todos los slots existentes).
+  acceptedType?: "pdf" | "csv";
+
   idCatalogo?: number;
   codigoEvidencia?: string;
   nombreArchivoBase?: string;

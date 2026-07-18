@@ -85,6 +85,11 @@ function makeIndicators(
           sourceNum: 4,
           label: "Evidencia de Difusión (EF3)",
         },
+        {
+          sourceNum: 5,
+          label: "Resultados de Encuesta (CSV)",
+          acceptedType: "csv",
+        },
       ],
     },
     {

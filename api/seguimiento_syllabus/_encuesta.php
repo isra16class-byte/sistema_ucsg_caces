@@ -1,16 +1,20 @@
 <?php
 /**
  * Puerto de views.py (_descargar_csv, _buscar_columna, _calcular_ef_desde_csv,
- * obtener_detalle_encuesta) del módulo Django. Misma fuente de datos: un CSV
- * público publicado desde Google Sheets (Google Forms).
+ * obtener_detalle_encuesta) del módulo Django.
  *
- * No depende de mysqli/BD -- por eso este archivo no cambió respecto a la
- * versión anterior. Cache de respaldo en disco (sys_get_temp_dir()) porque
- * PHP-FPM/Apache no comparte memoria de proceso entre requests como sí
- * hacía el _CSV_CACHE en memoria de Django.
+ * CAMBIO DE FUENTE (ver memoria del proyecto): la encuesta ya NO se lee de un
+ * CSV público publicado desde Google Sheets. Ahora se sube como evidencia del
+ * slot DOC.SEG.05 (mismo mecanismo genérico de slots que DOC.SEG.01-04),
+ * queda guardada en Google Drive, y este archivo la descarga desde ahí usando
+ * el mismo cliente autorizado que ya usa la subida (api/google_drive).
+ *
+ * Requiere mysqli (para encontrar el archivo vigente en la tabla Evidencias)
+ * y el cliente de Drive autorizado -- a diferencia de la versión anterior,
+ * que no dependía de ninguno de los dos.
  */
 
-const URL_CSV_ENCUESTA = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSS9YX0N26YnO5pUAYc2U7JchenIAEasrpq0gs79Up0fOLrayn6JX-FmuolcXSkIL0MReJ7j0jpXPtC/pub?output=csv';
+const CODIGO_EVIDENCIA_ENCUESTA = 'DOC.SEG.05';
 
 const PUNTAJE_MAP = [
     'Siempre'       => 5,
@@ -20,77 +24,126 @@ const PUNTAJE_MAP = [
     'Nunca'         => 1,
 ];
 
-function _rutaCacheCsv(): string
+/**
+ * Busca en `evidencias` el archivo CSV vigente para esta evaluación (subido
+ * vía el slot DOC.SEG.05) y devuelve su url_archivo de Drive (webViewLink),
+ * o null si todavía no se ha subido ninguno para esta evaluación.
+ */
+function _buscarUrlCsvEncuesta(mysqli $conexion, int $idEvaluacion): ?string
 {
-    return sys_get_temp_dir() . '/seguimiento_syllabus_encuesta_cache.csv';
+    $sql = "SELECT url_archivo
+            FROM evidencias
+            WHERE codigo_evidencia = ?
+              AND id_evaluacion = ?
+            ORDER BY fecha_subida DESC
+            LIMIT 1";
+
+    $stmt = $conexion->prepare($sql);
+    if (!$stmt) {
+        error_log('seguimiento_syllabus: no se pudo preparar la búsqueda del CSV de encuesta: ' . $conexion->error);
+        return null;
+    }
+
+    $codigo = CODIGO_EVIDENCIA_ENCUESTA;
+    $stmt->bind_param('si', $codigo, $idEvaluacion);
+    $stmt->execute();
+    $fila = $stmt->get_result()->fetch_assoc();
+
+    return $fila['url_archivo'] ?? null;
 }
 
-// TTL del caché en disco, en segundos. Los datos de la encuesta no cambian
-// minuto a minuto, así que mientras el archivo en disco tenga menos de esta
-// antigüedad, se usa directamente sin pegarle a Google Sheets. Subir este
-// valor = menos descargas pero datos potencialmente más "viejos" en pantalla
-// (nunca más viejos que este número de segundos).
+/**
+ * Descarga el contenido del archivo de Drive dado su webViewLink
+ * (https://drive.google.com/file/d/{ID}/view...), usando el cliente
+ * autorizado que ya usa api/google_drive/subir_archivo.php. Si Drive no está
+ * conectado o el token venció, cliente_autorizado.php lanza RuntimeException
+ * -- se deja propagar y el llamador la atrapa (ver descargarCsvEncuesta).
+ */
+function _descargarContenidoDrive(string $urlArchivo): ?string
+{
+    if (!preg_match('#/d/([a-zA-Z0-9_-]+)#', $urlArchivo, $m)) {
+        error_log("seguimiento_syllabus: no se pudo extraer el id de Drive de '{$urlArchivo}'.");
+        return null;
+    }
+    $idArchivo = $m[1];
+
+    require_once __DIR__ . '/../google_drive/drive_helpers.php';
+    $cliente = require __DIR__ . '/../google_drive/cliente_autorizado.php';
+    $drive = new Google\Service\Drive($cliente);
+
+    $respuesta = $drive->files->get($idArchivo, ['alt' => 'media']);
+    return $respuesta->getBody()->getContents();
+}
+
+function _rutaCacheCsv(int $idEvaluacion): string
+{
+    return sys_get_temp_dir() . '/seguimiento_syllabus_encuesta_cache_' . $idEvaluacion . '.csv';
+}
+
+// TTL del caché en disco, en segundos. Ya no hay descarga pública a Google
+// Sheets, pero igual conviene no pegarle a la API de Drive en cada una de las
+// ~8 llamadas por PAO que hace calcularResultadoGeneral() -- este caché por
+// evaluación cubre eso, además de la memoización por petición de más abajo.
 const TTL_CACHE_CSV_SEGUNDOS = 60;
 
-function descargarCsvEncuesta(): ?array
+function descargarCsvEncuesta(mysqli $conexion, int $idEvaluacion): ?array
 {
     // Memoización por petición: calcularResultadoGeneral() llama a esta función
-    // una vez por cada asignatura del PAO (vía calcularEfDesdeCsv), lo que antes
-    // significaba N descargas HTTP idénticas a Google Sheets por cada carga de
-    // pantalla. El static vive solo durante esta petición PHP (cada worker de
-    // PHP-FPM lo reinicia en la siguiente request), así que no hay riesgo de
-    // servir un CSV desactualizado en una carga posterior -- solo evita repetir
-    // el trabajo dentro de la misma petición.
-    static $resultado = null;
-    static $yaConsultado = false;
+    // una vez por cada asignatura del PAO (vía calcularEfDesdeCsv). El static
+    // está indexado por evaluación por si en algún flujo se llegara a consultar
+    // más de una evaluación en la misma petición PHP.
+    static $cache = [];
 
-    if ($yaConsultado) {
-        return $resultado;
+    if (array_key_exists($idEvaluacion, $cache)) {
+        return $cache[$idEvaluacion];
     }
-    $yaConsultado = true;
 
-    $rutaCache = _rutaCacheCsv();
+    $rutaCache = _rutaCacheCsv($idEvaluacion);
 
-    // Caché primario en disco con TTL: si el archivo existe y su antigüedad es
-    // menor al TTL, se usa directo sin tocar la red. Esto beneficia a
-    // peticiones PHP distintas (las 3 llamadas en paralelo del dashboard por
-    // PAO, o recargas seguidas de la página), no solo llamadas repetidas
-    // dentro de la misma petición.
     if (is_readable($rutaCache) && (time() - filemtime($rutaCache)) < TTL_CACHE_CSV_SEGUNDOS) {
         $cacheContenido = file_get_contents($rutaCache);
         if ($cacheContenido !== false) {
-            $resultado = ['filas' => parseCsvString($cacheContenido), 'degradado' => false];
-            return $resultado;
+            $cache[$idEvaluacion] = ['filas' => parseCsvString($cacheContenido), 'degradado' => false];
+            return $cache[$idEvaluacion];
         }
     }
 
-    $ctx = stream_context_create([
-        'http' => ['timeout' => 10, 'header' => "User-Agent: Mozilla/5.0\r\n"],
-    ]);
+    $urlArchivo = _buscarUrlCsvEncuesta($conexion, $idEvaluacion);
 
-    $contenido = @file_get_contents(URL_CSV_ENCUESTA, false, $ctx);
-
-    if ($contenido !== false) {
-        @file_put_contents($rutaCache, $contenido);
-        $resultado = ['filas' => parseCsvString($contenido), 'degradado' => false];
-        return $resultado;
+    if ($urlArchivo === null) {
+        // Todavía no se subió el CSV de la encuesta para esta evaluación.
+        // No es un error -- calcularResultadoAsignatura() ya sabe tratar
+        // "sin datos de encuesta" como EF1/EF4 pendientes.
+        $cache[$idEvaluacion] = null;
+        return null;
     }
 
-    error_log('seguimiento_syllabus: no se pudo descargar el CSV de la encuesta, intentando cache.');
+    try {
+        $contenido = _descargarContenidoDrive($urlArchivo);
+    } catch (Throwable $e) {
+        error_log('seguimiento_syllabus: no se pudo descargar el CSV de encuesta desde Drive: ' . $e->getMessage());
+        $contenido = null;
+    }
 
-    // A esta altura el caché no pasó el chequeo de TTL de arriba (o no existe),
-    // pero como último recurso ante una descarga fallida, se usa aunque esté
-    // vencido -- mejor datos "degradados" que ninguno.
+    if ($contenido !== null) {
+        @file_put_contents($rutaCache, $contenido);
+        $cache[$idEvaluacion] = ['filas' => parseCsvString($contenido), 'degradado' => false];
+        return $cache[$idEvaluacion];
+    }
+
+    // Descarga fallida (p.ej. Drive desconectado): como último recurso se usa
+    // el caché en disco aunque esté vencido -- mejor datos "degradados" que
+    // ninguno.
     if (is_readable($rutaCache)) {
         $cacheContenido = file_get_contents($rutaCache);
         if ($cacheContenido !== false) {
-            $resultado = ['filas' => parseCsvString($cacheContenido), 'degradado' => true];
-            return $resultado;
+            $cache[$idEvaluacion] = ['filas' => parseCsvString($cacheContenido), 'degradado' => true];
+            return $cache[$idEvaluacion];
         }
     }
 
-    $resultado = null;
-    return $resultado;
+    $cache[$idEvaluacion] = null;
+    return null;
 }
 
 function parseCsvString(string $contenido): array
@@ -130,9 +183,9 @@ function textoPregunta(string $header, int $numero): string
     return trim($header);
 }
 
-function calcularEfDesdeCsv(?string $materia = null): ?array
+function calcularEfDesdeCsv(mysqli $conexion, int $idEvaluacion, ?string $materia = null): ?array
 {
-    $csv = descargarCsvEncuesta();
+    $csv = descargarCsvEncuesta($conexion, $idEvaluacion);
     if ($csv === null) {
         return null;
     }
@@ -213,9 +266,9 @@ function calcularEfDesdeCsv(?string $materia = null): ?array
     ];
 }
 
-function obtenerDetalleEncuesta(?string $materia = null): ?array
+function obtenerDetalleEncuesta(mysqli $conexion, int $idEvaluacion, ?string $materia = null): ?array
 {
-    $csv = descargarCsvEncuesta();
+    $csv = descargarCsvEncuesta($conexion, $idEvaluacion);
     if ($csv === null) {
         return null;
     }
@@ -293,9 +346,9 @@ function obtenerDetalleEncuesta(?string $materia = null): ?array
     ];
 }
 
-function obtenerMateriasDisponibles(): array
+function obtenerMateriasDisponibles(mysqli $conexion, int $idEvaluacion): array
 {
-    $csv = descargarCsvEncuesta();
+    $csv = descargarCsvEncuesta($conexion, $idEvaluacion);
     if ($csv === null) {
         return [];
     }

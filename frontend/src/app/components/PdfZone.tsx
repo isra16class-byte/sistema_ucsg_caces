@@ -7,7 +7,7 @@ import {
 } from "lucide-react";
 
 import type { EvidenceSlot } from "../../types";
-import { validatePDF } from "../../utils/pdf";
+import { validatePDF, validateCSV } from "../../utils/pdf";
 
 interface PdfZoneProps {
   slot: EvidenceSlot;
@@ -28,6 +28,7 @@ export default function PdfZone({
   disabled = false,
 }: PdfZoneProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const esCsv = slot.acceptedType === "csv";
 
   function pick(
     event: React.ChangeEvent<HTMLInputElement>,
@@ -38,7 +39,7 @@ export default function PdfZone({
       return;
     }
 
-    const error = validatePDF(file);
+    const error = esCsv ? validateCSV(file) : validatePDF(file);
 
     if (error) {
       onChange({
@@ -202,7 +203,11 @@ export default function PdfZone({
       <input
         ref={inputRef}
         type="file"
-        accept=".pdf,application/pdf"
+        accept={
+          esCsv
+            ? ".csv,text/csv"
+            : ".pdf,application/pdf"
+        }
         className="hidden"
         onChange={pick}
       />

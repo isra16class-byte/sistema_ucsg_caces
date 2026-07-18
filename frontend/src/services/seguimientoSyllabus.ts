@@ -118,8 +118,8 @@ export interface EncuestaDetalle {
   preguntas: PreguntaEncuestaDetalle[];
 }
 
-export function obtenerEncuestaDetalle(idAsignatura: number): Promise<EncuestaDetalle> {
-  return getJson(`${BASE}/encuesta_detalle.php?id_asignatura=${idAsignatura}`);
+export function obtenerEncuestaDetalle(idAsignatura: number, idEvaluacion: number): Promise<EncuestaDetalle> {
+  return getJson(`${BASE}/encuesta_detalle.php?id_asignatura=${idAsignatura}&id_evaluacion=${idEvaluacion}`);
 }
 
 export async function subirEvidenciaAsignatura(params: {

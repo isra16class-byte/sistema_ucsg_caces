@@ -110,34 +110,6 @@ if ($archivo["size"] > $tamanoMaximo) {
     exit;
 }
 
-$extension = strtolower(
-    pathinfo(
-        $archivo["name"],
-        PATHINFO_EXTENSION
-    )
-);
-
-$finfo = new finfo(FILEINFO_MIME_TYPE);
-
-$tipoMime = $finfo->file(
-    $archivo["tmp_name"]
-);
-
-if (
-    $extension !== "pdf" ||
-    $tipoMime !== "application/pdf"
-) {
-    http_response_code(400);
-
-    echo json_encode([
-        "ok" => false,
-        "mensaje" =>
-            "Solo se aceptan archivos PDF válidos."
-    ], JSON_UNESCAPED_UNICODE);
-
-    exit;
-}
-
 $sql = "
     SELECT
         codigo_evidencia,
@@ -190,6 +162,57 @@ if (!$catalogo) {
     exit;
 }
 
+// Único slot que hoy espera CSV en vez de PDF. Se identifica por
+// codigo_evidencia (dato de servidor, no lo que mande el cliente) para no
+// depender de que el frontend mande el tipo correcto.
+$esCsv = $catalogo["codigo_evidencia"] === "DOC.SEG.05";
+
+$extension = strtolower(
+    pathinfo(
+        $archivo["name"],
+        PATHINFO_EXTENSION
+    )
+);
+
+$finfo = new finfo(FILEINFO_MIME_TYPE);
+
+$tipoMime = $finfo->file(
+    $archivo["tmp_name"]
+);
+
+if ($esCsv) {
+    $mimeCsvValidos = [
+        "text/csv",
+        "application/csv",
+        "application/vnd.ms-excel",
+        "text/plain",
+    ];
+
+    if ($extension !== "csv" || !in_array($tipoMime, $mimeCsvValidos, true)) {
+        http_response_code(400);
+
+        echo json_encode([
+            "ok" => false,
+            "mensaje" =>
+                "Solo se aceptan archivos CSV válidos."
+        ], JSON_UNESCAPED_UNICODE);
+
+        exit;
+    }
+} else {
+    if ($extension !== "pdf" || $tipoMime !== "application/pdf") {
+        http_response_code(400);
+
+        echo json_encode([
+            "ok" => false,
+            "mensaje" =>
+                "Solo se aceptan archivos PDF válidos."
+        ], JSON_UNESCAPED_UNICODE);
+
+        exit;
+    }
+}
+
 $nombreBase = preg_replace(
     "/[^A-Za-z0-9_]/",
     "_",
@@ -212,19 +235,20 @@ $numeroEvidencia = intval(
 );
 
 $nombreGenerado = sprintf(
-    "%s.%s.C%d.%d.%d.%s.pdf",
+    "%s.%s.C%d.%d.%d.%s.%s",
     $codigoCarrera,
     $cohorte,
     $criterio,
     $indicador,
     $numeroEvidencia,
-    $nombreBase
+    $nombreBase,
+    $esCsv ? "csv" : "pdf"
 );
 
 echo json_encode([
     "ok" => true,
     "mensaje" =>
-        "PDF validado y nombre generado correctamente.",
+        ($esCsv ? "CSV" : "PDF") . " validado y nombre generado correctamente.",
     "datos" => [
         "id_catalogo" =>
             $idCatalogo,

@@ -230,7 +230,7 @@ function TabResults({ ind, career, cohort, pao }: { ind: IndicatorDef; career: C
       const [guardadas, compartidas, encuestaDetalle] = await Promise.all([
         obtenerEvidenciasGuardadas(evaluacion.id_evaluacion, idIndicador),
         obtenerEvidenciasCompartidas(evaluacion.id_evaluacion, idIndicador),
-        obtenerEncuestaDetalle(asig.id_asignatura),
+        obtenerEncuestaDetalle(asig.id_asignatura, evaluacion.id_evaluacion),
       ]);
 
       await exportarPdfIndicador2({

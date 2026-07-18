@@ -86,7 +86,7 @@ function calcularResultadoAsignatura(mysqli $conexion, int $idAsignatura, string
     $totalEvidencias = ($tieneEf2 ? 1 : 0) + ($tieneEf3 ? 1 : 0) + ($tieneEf5 ? 1 : 0);
     $pctEvidencias = $totalEvidencias > 0 ? round($totalEvidencias / 3 * 100, 1) : 0;
 
-    $datosEf = calcularEfDesdeCsv($nombreAsignatura);
+    $datosEf = calcularEfDesdeCsv($conexion, $idEvaluacion, $nombreAsignatura);
     $efDisponible = $datosEf !== null && $datosEf['respuestas'] > 0;
 
     $ef1Encuesta = $efDisponible ? $datosEf['ef1'] : 0.0;
