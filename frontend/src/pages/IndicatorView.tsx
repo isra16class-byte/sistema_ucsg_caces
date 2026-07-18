@@ -43,6 +43,7 @@ import {
   I3_MATERIAS_BY_PAO,
   i3MateriaScore,
   i3PaoScore,
+  i3PorcentajePorPuntos,
 } from "../data/evaluation";
 
 import {
@@ -419,28 +420,41 @@ function TabResultsI3({ ind, career, cohort, pao }: { ind: IndicatorDef; career:
 
   // ── EF ring card ──────────────────────────────────────────────────────────
   function RingCard({ efIdx }: { efIdx: number }) {
-    const ef     = I3_EF_DEFS[efIdx];
-    const hasDoc = materia.efDocs[efIdx];
-    // contribution % = weight × 100 cuando hay doc (EF = 1.0)
-    const contribPct = Math.round(ef.weight * 100);
+    const ef        = I3_EF_DEFS[efIdx];
+    const puntos    = materia.efPuntos[efIdx];
+    const sinDatos  = puntos === null;
+    const totalEf   = efIdx === 3 ? 4 : 3;
+    const pctEf     = sinDatos ? 0 : i3PorcentajePorPuntos(puntos, totalEf);
+    // Aporte real al resultado general = % del EF × peso del EF.
+    const contribPct = Math.round(ef.weight * pctEf);
+    const detalle   = materia.efDetalle?.[efIdx];
+
+    // Color por escala (mismos cortes CACES ≥75/≥50/≥25 que I2).
+    const color = sinDatos
+      ? "#9CA3AF"
+      : pctEf >= 75 ? "#16A34A"
+      : pctEf >= 50 ? "#CA8A04"
+      : pctEf >= 25 ? "#F97316"
+      : "#EF4444";
 
     return (
       <div className="bg-white rounded-2xl flex flex-col items-center justify-center gap-1.5 py-4"
-        style={{ border: "1px solid rgba(27,58,107,0.08)" }}>
+        style={{ border: "1px solid rgba(27,58,107,0.08)" }}
+        title={detalle ? detalle.map(p => `${p.cumplido ? "✓" : "✗"} ${p.label}`).join("\n") : undefined}>
         <p className="text-xs font-semibold text-center leading-tight px-3"
           style={{ color: "#5A7295" }}>{ef.label}</p>
         <div className="relative flex items-center justify-center" style={{ width: 86, height: 86 }}>
-          <DonutRing pct={hasDoc ? contribPct : 0} color={hasDoc ? "#16A34A" : "#E5E7EB"} />
+          <DonutRing pct={sinDatos ? 0 : pctEf} color={sinDatos ? "#E5E7EB" : color} />
           <span className="absolute font-bold text-center leading-none"
-            style={{ color: hasDoc ? "#16A34A" : "#9CA3AF", fontFamily: "'DM Mono',monospace", fontSize: hasDoc ? 14 : 9 }}>
-            {hasDoc ? `${contribPct}%` : "Sin\ndatos"}
+            style={{ color, fontFamily: "'DM Mono',monospace", fontSize: sinDatos ? 9 : 14 }}>
+            {sinDatos ? "Sin\ndatos" : `${pctEf}%`}
           </span>
         </div>
         <span className="text-xs font-semibold px-2 py-0.5 rounded-full"
-          style={hasDoc
-            ? { background: "#DCFCE7", color: "#16A34A" }
-            : { background: "#F3F4F6", color: "#9CA3AF" }}>
-          {hasDoc ? `peso ${(ef.weight * 100).toFixed(0)}%` : "Sin datos"}
+          style={sinDatos
+            ? { background: "#F3F4F6", color: "#9CA3AF" }
+            : { background: "#EEF2F7", color: "#1B3A6B" }}>
+          {sinDatos ? "Sin datos" : `${puntos}/${totalEf} puntos · aporta ${contribPct}%`}
         </span>
       </div>
     );
