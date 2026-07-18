@@ -69,9 +69,12 @@ function makeIndicators(
       cohorts: [],
       slots: [
         {
+          // sourceNum:1 (Syllabus) ya NO usa sharedKey: cada asignatura sube
+          // su propio syllabus real vía evidencia_asignatura (tipo:
+          // "syllabus"), no un único archivo compartido desde I1. Ver
+          // MEMORIA sección 38.
           sourceNum: 1,
           label: "Syllabus",
-          sharedKey: "silabos",
         },
         {
           sourceNum: 2,

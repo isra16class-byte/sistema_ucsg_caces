@@ -841,6 +841,7 @@ function TabCohorts({
 // ── Tab Evidencias (split view) ────────────────────────────────────────────
 // Mapeo de sourceNum de I2 a tipo en evidencia_asignatura
 const I2_SOURCE_NUM_TO_TIPO: Record<number, string> = {
+  1: "syllabus",
   2: "acta_retroalimentacion",
   3: "acta_ajuste_curricular",
   4: "evidencia_difusion",
@@ -1006,28 +1007,6 @@ if (
     (evidencia) =>
       evidencia.codigo_evidencia ===
       "DOC.TIT.01",
-  );
-} else if (
-  ind.id === "I2" &&
-  slot.sourceNum === 1
-) {
-  /*
-   * El slot 1 de I2 ("Syllabus") es compartido desde I1
-   * (DOC.SYL.02). No se puede emparejar por `orden` porque
-   * I2 tambien tiene su propia fila de catalogo con orden=1
-   * (DOC.SEG.01, Reglamento/Normativa institucional, EF5),
-   * que todavia no tiene slot visible en el wizard.
-   */
-  propia = guardadas.find(
-    (evidencia) =>
-      evidencia.codigo_evidencia ===
-      "DOC.SYL.02",
-  );
-
-  compartida = compartidas.find(
-    (evidencia) =>
-      evidencia.codigo_evidencia ===
-      "DOC.SYL.02",
   );
 } else {
   propia = guardadas.find(

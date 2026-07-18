@@ -68,6 +68,7 @@ export default function EvidenceUploadView({ career, indicators, onChange, onBac
 
   // ── Resolución de id_asignatura real para I2 ─────────────────────────
   const I2_SLOT_TIPO: Record<number, string> = {
+    1: "syllabus",
     2: "acta_retroalimentacion",
     3: "acta_ajuste_curricular",
     4: "evidencia_difusion",
@@ -283,7 +284,10 @@ useEffect(() => {
 
     try {
             if (indicatorId === "I2") {
-        // --- I2: combina catálogo propio + syllabus compartido de I1 ---
+        // --- I2: catálogo propio (slots 2-4) + metadata de DOC.SYL.02 de I1
+        // solo para el label/idCatalogo del slot 1 (ver sección 38 de la
+        // memoria). `compartidas` ya no se usa para llenar el archivo del
+        // slot 1 -- se deja el fetch por si otro slot lo necesita a futuro. ---
         const [catalogoI2, catalogoI1, evaluacion] = await Promise.all([
           obtenerCatalogoEvidencias(2),
           obtenerCatalogoEvidencias(1),
@@ -318,14 +322,13 @@ useEffect(() => {
           return;
         }
 
-        // Metadata del Syllabus desde catálogo de I1
+        // Metadata del Syllabus desde catálogo de I1 (DOC.SYL.02). Se sigue
+        // usando solo para label/idCatalogo/etc.: el catálogo propio de I2 no
+        // tiene una fila equivalente en orden=1 (esa posición la ocupa
+        // DOC.SEG.01, Reglamento/Normativa, sin slot visible todavía en el
+        // wizard). El ARCHIVO del slot 1 ya NO viene de aquí -- ver más abajo.
         const syllabusCatalogo = catalogoI1.find(
           (item) => item.codigo_evidencia === "DOC.SYL.02",
-        );
-
-        // Evidencia compartida ya subida (desde I1 o antes desde I2)
-        const syllabusCompartido = compartidas.find(
-          (evidencia) => evidencia.codigo_evidencia === "DOC.SYL.02",
         );
 
         onChange(
@@ -337,35 +340,48 @@ useEffect(() => {
             return {
               ...ind,
               slots: ind.slots.map((slot) => {
-                // Slot 1: se llena EXCLUSIVAMENTE desde DOC.SYL.02 de I1
+                // Slot 1 (Syllabus): mismo patrón por-asignatura que los slots
+                // 2-4 (ver MEMORIA sección 38). La metadata (label/idCatalogo/
+                // codigoEvidencia/etc.) se sigue tomando del catálogo de I1
+                // (DOC.SYL.02) -- eso no cambia y es necesario porque
+                // procesarPdf exige idCatalogo/codigoEvidencia antes de
+                // permitir la subida. Lo que SÍ cambia es el ARCHIVO: ya no
+                // viene del mecanismo compartido evaluación-wide de I1
+                // (`compartidas` / DOC.SYL.02), sino de evidencia_asignatura
+                // con tipo="syllabus", igual que EF2/EF3. Si idAsignatura
+                // todavía no resolvió (evidenciaAsignatura === null), el slot
+                // se muestra sin archivo -- nunca cae al mecanismo viejo.
                 if (slot.sourceNum === 1) {
-                  // Si no existe el syllabus en catálogo I1, dejar el slot como está
-                  if (!syllabusCatalogo) {
-                    return slot;
-                  }
+                  const conMetadata = syllabusCatalogo
+                    ? {
+                        ...slot,
+                        label: syllabusCatalogo.titulo_corto || slot.label,
+                        idCatalogo: syllabusCatalogo.id_catalogo,
+                        codigoEvidencia: syllabusCatalogo.codigo_evidencia,
+                        nombreArchivoBase: syllabusCatalogo.nombre_archivo_base,
+                        descripcionCompleta: syllabusCatalogo.descripcion,
+                      }
+                    : slot;
+
+                  const itemSyllabus = evidenciaAsignatura?.find(
+                    (e: any) => e.tipo === "syllabus",
+                  );
 
                   return {
-                    ...slot,
-                    label: syllabusCatalogo.titulo_corto || slot.label,
-                    idCatalogo: syllabusCatalogo.id_catalogo,
-                    codigoEvidencia: syllabusCatalogo.codigo_evidencia,
-                    nombreArchivoBase: syllabusCatalogo.nombre_archivo_base,
-                    descripcionCompleta: syllabusCatalogo.descripcion,
-
-                    idEvidencia:
-                      syllabusCompartido?.id_evidencia ?? slot.idEvidencia,
-                    sharedFrom:
-                      syllabusCompartido?.indicador_origen ?? slot.sharedFrom,
-
-                    file: syllabusCompartido
-                      ? {
-                          fileName: syllabusCompartido.nombre_archivo,
-                          originalName: syllabusCompartido.nombre_archivo,
-                          url: syllabusCompartido.url_archivo,
-                          serverUrl: syllabusCompartido.url_archivo,
-                          size: 0,
-                        }
-                      : slot.file,
+                    ...conMetadata,
+                    sharedKey: undefined,
+                    sharedFrom: undefined,
+                    idEvidencia: undefined,
+                    file:
+                      itemSyllabus && itemSyllabus.subida && itemSyllabus.archivo
+                        ? {
+                            fileName: itemSyllabus.archivo.nombre_archivo,
+                            originalName: itemSyllabus.archivo.nombre_archivo,
+                            url: itemSyllabus.archivo.url_archivo,
+                            serverUrl: itemSyllabus.archivo.url_archivo,
+                            size: 0,
+                          }
+                        : undefined,
                   };
                 }
 
