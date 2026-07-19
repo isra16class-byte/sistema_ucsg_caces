@@ -69,6 +69,30 @@ function makeIndicators(
       cohorts: [],
       slots: [
         {
+          // Malla Curricular (DOC.SYL.01, catálogo propio de I1) --
+          // evaluation-wide, a nivel carrera+cohorte, NO por asignatura.
+          // sharedKey "malla_curricular" reusa el mismo patrón ya usado por
+          // I1 (slot 1) e I5 (slot 4): si se sube desde cualquiera de los
+          // indicadores que comparten esta clave, los demás reflejan el
+          // mismo archivo de inmediato en memoria (ver updateSlot en
+          // EvidenceUploadView.tsx). La regla real de compartición
+          // (compartir_catalogo: id_catalogo_origen=5 -> id_indicador_destino=2)
+          // ya existe en la base de datos real -- no requirió migración.
+          sourceNum: 7,
+          label: "Malla Curricular",
+          sharedKey: "malla_curricular",
+        },
+        {
+          // Normativa Institucional (DOC.SEG.01, catálogo propio de I2,
+          // orden=1) -- evaluation-wide, a nivel carrera+cohorte. Existía en
+          // el catálogo desde el inicio pero nunca tuvo slot visible en el
+          // frontend (la posición orden=1 quedó ocupada por Syllabus). Ya
+          // se usa en _calculo.php para EF5 (tiposCarreraVigentes) -- no
+          // requirió cambios de backend, solo exponerlo en la UI.
+          sourceNum: 6,
+          label: "Normativa Institucional",
+        },
+        {
           // sourceNum:1 (Syllabus) ya NO usa sharedKey: cada asignatura sube
           // su propio syllabus real vía evidencia_asignatura (tipo:
           // "syllabus"), no un único archivo compartido desde I1. Ver

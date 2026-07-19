@@ -985,7 +985,38 @@ if (
  * 1 = Matriculados  -> DOC.TIT.02
  * 2 = Graduados     -> DOC.TIT.01
  */
-if (
+/*
+ * Malla Curricular (DOC.SYL.01, sourceNum 7) y Normativa Institucional
+ * (DOC.SEG.01, sourceNum 6): ambos evaluation-wide (a nivel carrera+cohorte,
+ * NO por asignatura), a diferencia de los slots 1-5 de arriba. Malla es
+ * propia del catálogo de I1 y llega a I2 solo vía `compartidas` (regla
+ * compartir_catalogo ya existente en la base real); Normativa es propia del
+ * catálogo de I2 y llega vía `guardadas`. Se matchea por codigo_evidencia,
+ * no por orden, porque ninguno de los dos coincide con su sourceNum visual
+ * (DOC.SEG.01 tiene orden=1 en su catálogo, pero ese sourceNum ya lo usa
+ * Syllabus).
+ */
+if (ind.id === "I2" && slot.sourceNum === 7) {
+  propia = guardadas.find(
+    (evidencia) =>
+      evidencia.codigo_evidencia === "DOC.SYL.01",
+  );
+
+  compartida = compartidas.find(
+    (evidencia) =>
+      evidencia.codigo_evidencia === "DOC.SYL.01",
+  );
+} else if (ind.id === "I2" && slot.sourceNum === 6) {
+  propia = guardadas.find(
+    (evidencia) =>
+      evidencia.codigo_evidencia === "DOC.SEG.01",
+  );
+
+  compartida = compartidas.find(
+    (evidencia) =>
+      evidencia.codigo_evidencia === "DOC.SEG.01",
+  );
+} else if (
   ind.id === "I5" &&
   slot.sourceNum === 1
 ) {

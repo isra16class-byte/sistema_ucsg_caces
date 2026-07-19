@@ -340,6 +340,19 @@ useEffect(() => {
           (item) => item.codigo_evidencia === "DOC.SYL.02",
         );
 
+        // Malla Curricular (DOC.SYL.01) es propia del catálogo de I1, no del
+        // de I2 -- se busca en catalogoI1, igual que el Syllabus arriba.
+        const mallaCatalogo = catalogoI1.find(
+          (item) => item.codigo_evidencia === "DOC.SYL.01",
+        );
+
+        // Normativa Institucional (DOC.SEG.01) SÍ es propia del catálogo de
+        // I2 (orden=1), pero nunca tuvo slot visible -- ver comentario más
+        // abajo, en el slot correspondiente.
+        const normativaCatalogo = catalogoI2.find(
+          (item) => item.codigo_evidencia === "DOC.SEG.01",
+        );
+
         onChange(
           indicators.map((ind) => {
             if (ind.id !== "I2") {
@@ -349,6 +362,86 @@ useEffect(() => {
             return {
               ...ind,
               slots: ind.slots.map((slot) => {
+                // Malla Curricular: evaluation-wide (a nivel carrera+cohorte,
+                // NO por asignatura), igual que reglamento_normativa. La
+                // metadata sale del catálogo de I1 (DOC.SYL.01, dueño
+                // original), el ARCHIVO sale de `compartidas` -- la regla de
+                // compartición (compartir_catalogo: catálogo 5 -> indicador 2)
+                // ya existe en la base real, así que `compartidas` ya trae
+                // este documento aunque nunca se haya mostrado en pantalla.
+                // Si se sube desde este slot, se guarda con el mismo
+                // idCatalogo=5 que usa I1 -- mismo registro (clave única
+                // id_evaluacion+id_catalogo), no uno nuevo.
+                if (slot.sourceNum === 7) {
+                  const conMetadata = mallaCatalogo
+                    ? {
+                        ...slot,
+                        label: mallaCatalogo.titulo_corto || slot.label,
+                        idCatalogo: mallaCatalogo.id_catalogo,
+                        codigoEvidencia: mallaCatalogo.codigo_evidencia,
+                        nombreArchivoBase: mallaCatalogo.nombre_archivo_base,
+                        descripcionCompleta: mallaCatalogo.descripcion,
+                      }
+                    : slot;
+
+                  const compartidaMalla = compartidas.find(
+                    (e: any) => e.codigo_evidencia === "DOC.SYL.01",
+                  );
+
+                  return {
+                    ...conMetadata,
+                    sharedKey: "malla_curricular",
+                    sharedFrom: compartidaMalla?.indicador_origen,
+                    idEvidencia: compartidaMalla?.id_evidencia,
+                    file: compartidaMalla
+                      ? {
+                          fileName: compartidaMalla.nombre_archivo,
+                          originalName: compartidaMalla.nombre_archivo,
+                          url: compartidaMalla.url_archivo,
+                          serverUrl: compartidaMalla.url_archivo,
+                          size: 0,
+                        }
+                      : undefined,
+                  };
+                }
+
+                // Normativa Institucional: evaluation-wide, propia del
+                // catálogo de I2 (DOC.SEG.01, orden=1) -- existía desde el
+                // inicio pero sin slot visible porque esa posición (orden=1)
+                // quedó ocupada por el Syllabus reubicado (ver más abajo).
+                // Se lee de `guardadas` (evaluation-wide de I2), no de
+                // evidencia_asignatura -- no es por-materia.
+                if (slot.sourceNum === 6) {
+                  const conMetadata = normativaCatalogo
+                    ? {
+                        ...slot,
+                        label: normativaCatalogo.titulo_corto || slot.label,
+                        idCatalogo: normativaCatalogo.id_catalogo,
+                        codigoEvidencia: normativaCatalogo.codigo_evidencia,
+                        nombreArchivoBase: normativaCatalogo.nombre_archivo_base,
+                        descripcionCompleta: normativaCatalogo.descripcion,
+                      }
+                    : slot;
+
+                  const guardadaNormativa = guardadas.find(
+                    (e: any) => e.codigo_evidencia === "DOC.SEG.01",
+                  );
+
+                  return {
+                    ...conMetadata,
+                    idEvidencia: guardadaNormativa?.id_evidencia,
+                    file: guardadaNormativa
+                      ? {
+                          fileName: guardadaNormativa.nombre_archivo,
+                          originalName: guardadaNormativa.nombre_archivo,
+                          url: guardadaNormativa.url_archivo,
+                          serverUrl: guardadaNormativa.url_archivo,
+                          size: 0,
+                        }
+                      : undefined,
+                  };
+                }
+
                 // Slot 1 (Syllabus): mismo patrón por-asignatura que los slots
                 // 2-4 (ver MEMORIA sección 38). La metadata (label/idCatalogo/
                 // codigoEvidencia/etc.) se sigue tomando del catálogo de I1
