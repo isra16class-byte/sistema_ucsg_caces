@@ -286,8 +286,11 @@ useEffect(() => {
             if (indicatorId === "I2") {
         // --- I2: catálogo propio (slots 2-4) + metadata de DOC.SYL.02 de I1
         // solo para el label/idCatalogo del slot 1 (ver sección 38 de la
-        // memoria). `compartidas` ya no se usa para llenar el archivo del
-        // slot 1 -- se deja el fetch por si otro slot lo necesita a futuro. ---
+        // memoria). `compartidas` no se usa para llenar el ARCHIVO de ningún
+        // slot de I2 (se deja el fetch por si se necesita a futuro).
+        // `guardadas` (tabla vieja evaluation-wide `evidencias`) SÍ se sigue
+        // usando, pero solo para el slot 5 (CSV de encuesta), que no tiene
+        // tipo en evidencia_asignatura -- ver más abajo. ---
         const [catalogoI2, catalogoI1, evaluacion] = await Promise.all([
           obtenerCatalogoEvidencias(2),
           obtenerCatalogoEvidencias(1),
@@ -385,31 +388,33 @@ useEffect(() => {
                   };
                 }
 
-                // Slots 2,3,4: priorizar evidencia_asignatura (tabla real)
+                // Slots 2,3,4: metadata (label/idCatalogo/etc.) desde el
+                // catálogo propio de I2 -- eso no cambia, `procesarPdf` lo
+                // sigue necesitando para subir. El ARCHIVO, en cambio, sale
+                // ESTRICTAMENTE de evidencia_asignatura, sin fallback a la
+                // tabla vieja evaluation-wide `evidencias` (`guardadas`).
+                // Antes, cuando esta materia no tenía fila en
+                // evidencia_asignatura para este tipo (materia vacía o
+                // asignaturaId aún sin resolver), el código caía a
+                // `guardadas`, que es evaluación-wide y no filtra por
+                // asignatura -- eso hacía aparecer archivos de OTRA materia
+                // como si ya estuvieran cargados en esta (falso check verde,
+                // ver MEMORIA sección 39 punto 1, confirmado en vivo). Mismo
+                // patrón que el slot 1 (arriba) y que TabEvidences en
+                // IndicatorView.tsx, que nunca tuvo este fallback.
+                //
+                // Slot 5 (CSV Resultados de Encuesta) es la EXCEPCIÓN: el
+                // enum de `evidencia_asignatura` no tiene un tipo para csv/
+                // encuesta -- ese archivo siempre fue evaluation-wide, subido
+                // una sola vez por evaluación vía el mecanismo viejo (tabla
+                // `evidencias`, ver commit d59e1d1d). Por eso NO entra al
+                // bloque estricto: sigue usando `guardadas`, igual que
+                // TabEvidences en IndicatorView.tsx (que sí lo tiene
+                // correcto y por eso aparece "cargado" en todas las
+                // asignaturas de la evaluación -- comportamiento esperado,
+                // no bug). Si en el futuro se quiere CSV por-asignatura, hay
+                // que agregarle un tipo a la tabla real primero.
                 const slotTipo = I2_SLOT_TIPO[slot.sourceNum];
-                if (
-                  slotTipo !== undefined &&
-                  evidenciaAsignatura
-                ) {
-                  const item = evidenciaAsignatura.find(
-                    (e: any) => e.tipo === slotTipo,
-                  );
-
-                  if (item && item.subida && item.archivo) {
-                    return {
-                      ...slot,
-                      file: {
-                        fileName: item.archivo.nombre_archivo,
-                        originalName: item.archivo.nombre_archivo,
-                        url: item.archivo.url_archivo,
-                        serverUrl: item.archivo.url_archivo,
-                        size: 0,
-                      },
-                    };
-                  }
-                }
-
-                // Slots 2,3,4: llenar desde el catálogo propio de I2 (fallback a tabla vieja)
                 const evidencia = catalogoI2.find(
                   (item) => item.orden === slot.sourceNum,
                 );
@@ -418,10 +423,38 @@ useEffect(() => {
                   return slot;
                 }
 
-                const guardada = guardadas.find(
-                  (item) =>
-                    item.id_catalogo === evidencia.id_catalogo ||
-                    item.codigo_evidencia === evidencia.codigo_evidencia,
+                if (slotTipo === undefined) {
+                  const guardada = guardadas.find(
+                    (item) =>
+                      item.id_catalogo === evidencia.id_catalogo ||
+                      item.codigo_evidencia === evidencia.codigo_evidencia,
+                  );
+
+                  return {
+                    ...slot,
+                    label: evidencia.titulo_corto || slot.label,
+                    idCatalogo: evidencia.id_catalogo,
+                    codigoEvidencia: evidencia.codigo_evidencia,
+                    nombreArchivoBase: evidencia.nombre_archivo_base,
+                    descripcionCompleta: evidencia.descripcion,
+
+                    idEvidencia:
+                      guardada?.id_evidencia ?? slot.idEvidencia,
+
+                    file: guardada
+                      ? {
+                          fileName: guardada.nombre_archivo,
+                          originalName: guardada.nombre_archivo,
+                          url: guardada.url_archivo,
+                          serverUrl: guardada.url_archivo,
+                          size: 0,
+                        }
+                      : slot.file,
+                  };
+                }
+
+                const item = evidenciaAsignatura?.find(
+                  (e: any) => e.tipo === slotTipo,
                 );
 
                 return {
@@ -432,18 +465,18 @@ useEffect(() => {
                   nombreArchivoBase: evidencia.nombre_archivo_base,
                   descripcionCompleta: evidencia.descripcion,
 
-                  idEvidencia:
-                    guardada?.id_evidencia ?? slot.idEvidencia,
+                  idEvidencia: undefined,
 
-                  file: guardada
-                    ? {
-                        fileName: guardada.nombre_archivo,
-                        originalName: guardada.nombre_archivo,
-                        url: guardada.url_archivo,
-                        serverUrl: guardada.url_archivo,
-                        size: 0,
-                      }
-                    : slot.file,
+                  file:
+                    item && item.subida && item.archivo
+                      ? {
+                          fileName: item.archivo.nombre_archivo,
+                          originalName: item.archivo.nombre_archivo,
+                          url: item.archivo.url_archivo,
+                          serverUrl: item.archivo.url_archivo,
+                          size: 0,
+                        }
+                      : undefined,
                 };
               }),
             };
@@ -1005,9 +1038,16 @@ if (
     return;
   }
 
+  // Cuenta por `file`, no por `idEvidencia`: los slots 1-4 de I2 se
+  // persisten de inmediato en evidencia_asignatura vía subirEvidenciaAsignatura
+  // (ver procesarPdf), que nunca setea idEvidencia -- ese campo solo lo llena
+  // el mecanismo viejo (guardarEvidencia / tabla evidencias). Contar por
+  // idEvidencia hacía que "Guardar y volver" fallara con "Debe cargar al
+  // menos una evidencia" incluso con un Syllabus (u otro slot 1-4) recién
+  // subido y visible en pantalla.
   const cargadas =
     indicator.slots.filter(
-      (slot) => slot.idEvidencia && slot.file,
+      (slot) => slot.file,
     ).length;
 
   if (cargadas === 0) {
