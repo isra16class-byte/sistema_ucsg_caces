@@ -2,7 +2,12 @@
 require_once __DIR__ . '/_encuesta.php';
 
 const TIPOS_POR_CARRERA = ['malla_curricular', 'reglamento_normativa'];
-const TIPOS_POR_ASIGNATURA = ['syllabus', 'acta_retroalimentacion', 'acta_ajuste_curricular', 'evidencia_difusion'];
+// 'encuesta_csv' (slot 5 de I2) se agrega aquí a partir de la migración
+// sql/migracion_i2_encuesta_csv_por_asignatura.sql: el CSV de la encuesta de
+// heteroevaluación ahora se sube por-asignatura, igual que los otros 4
+// documentos de I2, en vez de ser un único archivo evaluation-wide con
+// filtrado de filas por nombre de materia (ver MEMORIA v18).
+const TIPOS_POR_ASIGNATURA = ['syllabus', 'acta_retroalimentacion', 'acta_ajuste_curricular', 'evidencia_difusion', 'encuesta_csv'];
 
 function etiquetasEvidencia(): array
 {
@@ -13,6 +18,7 @@ function etiquetasEvidencia(): array
         'acta_ajuste_curricular'  => 'Acta de Ajuste Curricular (EF2)',
         'evidencia_difusion'      => 'Evidencia de Difusión (EF3)',
         'reglamento_normativa'    => 'Reglamento / Normativa Institucional (EF5)',
+        'encuesta_csv'            => 'Resultados de Encuesta (CSV)',
     ];
 }
 
@@ -86,7 +92,11 @@ function calcularResultadoAsignatura(mysqli $conexion, int $idAsignatura, string
     $totalEvidencias = ($tieneEf2 ? 1 : 0) + ($tieneEf3 ? 1 : 0) + ($tieneEf5 ? 1 : 0);
     $pctEvidencias = $totalEvidencias > 0 ? round($totalEvidencias / 3 * 100, 1) : 0;
 
-    $datosEf = calcularEfDesdeCsv($conexion, $idEvaluacion, $nombreAsignatura);
+    // El CSV de la encuesta ya es propio de esta asignatura (slot
+    // 'encuesta_csv' en evidencia_asignatura) -- ya no se descarga un CSV
+    // evaluation-wide ni se filtran filas por nombre de materia (ver
+    // MEMORIA v18). $idEvaluacion ya no se necesita para esto.
+    $datosEf = calcularEfDesdeCsv($conexion, $idAsignatura);
     $efDisponible = $datosEf !== null && $datosEf['respuestas'] > 0;
 
     $ef1Encuesta = $efDisponible ? $datosEf['ef1'] : 0.0;

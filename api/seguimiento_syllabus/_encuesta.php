@@ -3,18 +3,26 @@
  * Puerto de views.py (_descargar_csv, _buscar_columna, _calcular_ef_desde_csv,
  * obtener_detalle_encuesta) del módulo Django.
  *
- * CAMBIO DE FUENTE (ver memoria del proyecto): la encuesta ya NO se lee de un
- * CSV público publicado desde Google Sheets. Ahora se sube como evidencia del
- * slot DOC.SEG.05 (mismo mecanismo genérico de slots que DOC.SEG.01-04),
- * queda guardada en Google Drive, y este archivo la descarga desde ahí usando
- * el mismo cliente autorizado que ya usa la subida (api/google_drive).
+ * CAMBIO DE FUENTE (v1, ver memoria del proyecto): la encuesta ya NO se lee
+ * de un CSV público publicado desde Google Sheets. Se sube como evidencia
+ * (mismo mecanismo genérico de slots), queda guardada en Google Drive, y
+ * este archivo la descarga desde ahí usando el mismo cliente autorizado que
+ * ya usa la subida (api/google_drive).
  *
- * Requiere mysqli (para encontrar el archivo vigente en la tabla Evidencias)
- * y el cliente de Drive autorizado -- a diferencia de la versión anterior,
- * que no dependía de ninguno de los dos.
+ * CAMBIO DE ALCANCE (v18, ver MEMORIA): el CSV dejó de ser un único archivo
+ * evaluation-wide con filas de varias materias mezcladas. La encuesta real
+ * siempre tiene el nombre de una materia y de un profesor fijos -- cada CSV
+ * YA es de una sola materia. Por eso ahora el CSV se sube por-asignatura
+ * (tipo 'encuesta_csv' en evidencia_asignatura, igual que syllabus/actas/
+ * ajuste/difusión) y estas funciones ya NO filtran filas por nombre de
+ * materia: toman todas las filas del CSV propio de la asignatura. Esto
+ * también resuelve de raíz el pendiente de "matching de nombre poco
+ * tolerante" (v17 sección 41, pendiente #10): ya no hay comparación de
+ * texto que hacer.
+ *
+ * Requiere mysqli (para encontrar el archivo vigente en evidencia_asignatura)
+ * y el cliente de Drive autorizado.
  */
-
-const CODIGO_EVIDENCIA_ENCUESTA = 'DOC.SEG.05';
 
 const PUNTAJE_MAP = [
     'Siempre'       => 5,
@@ -24,28 +32,31 @@ const PUNTAJE_MAP = [
     'Nunca'         => 1,
 ];
 
+const TIPO_EVIDENCIA_ENCUESTA = 'encuesta_csv';
+
 /**
- * Busca en `evidencias` el archivo CSV vigente para esta evaluación (subido
- * vía el slot DOC.SEG.05) y devuelve su url_archivo de Drive (webViewLink),
- * o null si todavía no se ha subido ninguno para esta evaluación.
+ * Busca en `evidencia_asignatura` el CSV vigente para esta asignatura
+ * (tipo='encuesta_csv', vigente=1) y devuelve su url_archivo de Drive
+ * (webViewLink), o null si esta asignatura todavía no tiene uno subido.
  */
-function _buscarUrlCsvEncuesta(mysqli $conexion, int $idEvaluacion): ?string
+function _buscarUrlCsvEncuestaAsignatura(mysqli $conexion, int $idAsignatura): ?string
 {
     $sql = "SELECT url_archivo
-            FROM evidencias
-            WHERE codigo_evidencia = ?
-              AND id_evaluacion = ?
+            FROM evidencia_asignatura
+            WHERE id_asignatura = ?
+              AND tipo = ?
+              AND vigente = 1
             ORDER BY fecha_subida DESC
             LIMIT 1";
 
     $stmt = $conexion->prepare($sql);
     if (!$stmt) {
-        error_log('seguimiento_syllabus: no se pudo preparar la búsqueda del CSV de encuesta: ' . $conexion->error);
+        error_log('seguimiento_syllabus: no se pudo preparar la búsqueda del CSV de encuesta por asignatura: ' . $conexion->error);
         return null;
     }
 
-    $codigo = CODIGO_EVIDENCIA_ENCUESTA;
-    $stmt->bind_param('si', $codigo, $idEvaluacion);
+    $tipo = TIPO_EVIDENCIA_ENCUESTA;
+    $stmt->bind_param('is', $idAsignatura, $tipo);
     $stmt->execute();
     $fila = $stmt->get_result()->fetch_assoc();
 
@@ -75,46 +86,48 @@ function _descargarContenidoDrive(string $urlArchivo): ?string
     return $respuesta->getBody()->getContents();
 }
 
-function _rutaCacheCsv(int $idEvaluacion): string
+function _rutaCacheCsv(int $idAsignatura): string
 {
-    return sys_get_temp_dir() . '/seguimiento_syllabus_encuesta_cache_' . $idEvaluacion . '.csv';
+    return sys_get_temp_dir() . '/seguimiento_syllabus_encuesta_cache_asignatura_' . $idAsignatura . '.csv';
 }
 
-// TTL del caché en disco, en segundos. Ya no hay descarga pública a Google
-// Sheets, pero igual conviene no pegarle a la API de Drive en cada una de las
-// ~8 llamadas por PAO que hace calcularResultadoGeneral() -- este caché por
-// evaluación cubre eso, además de la memoización por petición de más abajo.
+// TTL del caché en disco, en segundos. Este caché por asignatura cubre las
+// múltiples llamadas por PAO que hace calcularResultadoGeneral() (una por
+// asignatura, vía calcularEfDesdeCsv), además de la memoización por
+// petición de más abajo.
 const TTL_CACHE_CSV_SEGUNDOS = 60;
 
-function descargarCsvEncuesta(mysqli $conexion, int $idEvaluacion): ?array
+/**
+ * Descarga (con caché) el CSV de encuesta propio de una asignatura. Ya no
+ * recibe $idEvaluacion: el CSV está ligado directamente a la asignatura.
+ */
+function descargarCsvEncuesta(mysqli $conexion, int $idAsignatura): ?array
 {
-    // Memoización por petición: calcularResultadoGeneral() llama a esta función
-    // una vez por cada asignatura del PAO (vía calcularEfDesdeCsv). El static
-    // está indexado por evaluación por si en algún flujo se llegara a consultar
-    // más de una evaluación en la misma petición PHP.
+    // Memoización por petición: calcularResultadoGeneral() llama a esta
+    // función una vez por cada asignatura del PAO (vía calcularEfDesdeCsv).
     static $cache = [];
 
-    if (array_key_exists($idEvaluacion, $cache)) {
-        return $cache[$idEvaluacion];
+    if (array_key_exists($idAsignatura, $cache)) {
+        return $cache[$idAsignatura];
     }
 
-    $rutaCache = _rutaCacheCsv($idEvaluacion);
+    $rutaCache = _rutaCacheCsv($idAsignatura);
 
     if (is_readable($rutaCache) && (time() - filemtime($rutaCache)) < TTL_CACHE_CSV_SEGUNDOS) {
         $cacheContenido = file_get_contents($rutaCache);
         if ($cacheContenido !== false) {
-            $cache[$idEvaluacion] = ['filas' => parseCsvString($cacheContenido), 'degradado' => false];
-            return $cache[$idEvaluacion];
+            $cache[$idAsignatura] = ['filas' => parseCsvString($cacheContenido), 'degradado' => false];
+            return $cache[$idAsignatura];
         }
     }
 
-    $urlArchivo = _buscarUrlCsvEncuesta($conexion, $idEvaluacion);
+    $urlArchivo = _buscarUrlCsvEncuestaAsignatura($conexion, $idAsignatura);
 
     if ($urlArchivo === null) {
-        // Todavía no se subió el CSV de la encuesta para esta evaluación.
+        // Esta asignatura todavía no tiene CSV de encuesta propio subido.
         // No es un error -- calcularResultadoAsignatura() ya sabe tratar
         // "sin datos de encuesta" como EF1/EF4 pendientes.
-        $cache[$idEvaluacion] = null;
+        $cache[$idAsignatura] = null;
         return null;
     }
 
@@ -127,8 +140,8 @@ function descargarCsvEncuesta(mysqli $conexion, int $idEvaluacion): ?array
 
     if ($contenido !== null) {
         @file_put_contents($rutaCache, $contenido);
-        $cache[$idEvaluacion] = ['filas' => parseCsvString($contenido), 'degradado' => false];
-        return $cache[$idEvaluacion];
+        $cache[$idAsignatura] = ['filas' => parseCsvString($contenido), 'degradado' => false];
+        return $cache[$idAsignatura];
     }
 
     // Descarga fallida (p.ej. Drive desconectado): como último recurso se usa
@@ -137,12 +150,12 @@ function descargarCsvEncuesta(mysqli $conexion, int $idEvaluacion): ?array
     if (is_readable($rutaCache)) {
         $cacheContenido = file_get_contents($rutaCache);
         if ($cacheContenido !== false) {
-            $cache[$idEvaluacion] = ['filas' => parseCsvString($cacheContenido), 'degradado' => true];
-            return $cache[$idEvaluacion];
+            $cache[$idAsignatura] = ['filas' => parseCsvString($cacheContenido), 'degradado' => true];
+            return $cache[$idAsignatura];
         }
     }
 
-    $cache[$idEvaluacion] = null;
+    $cache[$idAsignatura] = null;
     return null;
 }
 
@@ -159,16 +172,6 @@ function parseCsvString(string $contenido): array
     return $filas;
 }
 
-function detectarIndiceMateria(array $headers): ?int
-{
-    for ($i = 0; $i < min(3, count($headers)); $i++) {
-        if (str_contains(mb_strtolower(trim($headers[$i])), 'materia')) {
-            return $i;
-        }
-    }
-    return count($headers) > 1 ? 1 : null;
-}
-
 function buscarColumnasPregunta(array $preguntas, int $numero): array
 {
     $patron = '/\[P' . $numero . '[\.\]]/i';
@@ -183,9 +186,16 @@ function textoPregunta(string $header, int $numero): string
     return trim($header);
 }
 
-function calcularEfDesdeCsv(mysqli $conexion, int $idEvaluacion, ?string $materia = null): ?array
+/**
+ * Calcula EF1/EF4 desde el CSV propio de la asignatura. Ya no recibe
+ * $materia ni filtra filas por nombre -- el CSV completo pertenece a esta
+ * asignatura (mismo formato de columnas de siempre: las primeras 3 son
+ * timestamp/materia/profesor -- fijas para todo el archivo -- y de ahí en
+ * adelante las preguntas [P1]..[P23]).
+ */
+function calcularEfDesdeCsv(mysqli $conexion, int $idAsignatura): ?array
 {
-    $csv = descargarCsvEncuesta($conexion, $idEvaluacion);
+    $csv = descargarCsvEncuesta($conexion, $idAsignatura);
     if ($csv === null) {
         return null;
     }
@@ -196,7 +206,6 @@ function calcularEfDesdeCsv(mysqli $conexion, int $idEvaluacion, ?string $materi
     }
 
     $headers = array_shift($filas);
-    $idxMateria = detectarIndiceMateria($headers);
     $preguntas = array_slice($headers, 3);
 
     $totales = array_fill_keys($preguntas, 0);
@@ -206,11 +215,6 @@ function calcularEfDesdeCsv(mysqli $conexion, int $idEvaluacion, ?string $materi
     foreach ($filas as $fila) {
         if (count($fila) < 4) {
             continue;
-        }
-        if ($materia !== null && $idxMateria !== null) {
-            if (!isset($fila[$idxMateria]) || mb_strtolower(trim($fila[$idxMateria])) !== mb_strtolower(trim($materia))) {
-                continue;
-            }
         }
         $totalFilas++;
         $respuestas = array_slice($fila, 3);
@@ -266,16 +270,19 @@ function calcularEfDesdeCsv(mysqli $conexion, int $idEvaluacion, ?string $materi
     ];
 }
 
-function obtenerDetalleEncuesta(mysqli $conexion, int $idEvaluacion, ?string $materia = null): ?array
+/**
+ * Detalle de las 23 preguntas para el CSV propio de la asignatura (anexo del
+ * PDF de I2). Ya no recibe $materia ni filtra filas.
+ */
+function obtenerDetalleEncuesta(mysqli $conexion, int $idAsignatura): ?array
 {
-    $csv = descargarCsvEncuesta($conexion, $idEvaluacion);
+    $csv = descargarCsvEncuesta($conexion, $idAsignatura);
     if ($csv === null) {
         return null;
     }
 
     $filas = $csv['filas'];
     $headers = array_shift($filas);
-    $idxMateria = detectarIndiceMateria($headers);
     $preguntas = array_slice($headers, 3);
     $opciones = array_keys(PUNTAJE_MAP);
 
@@ -283,18 +290,13 @@ function obtenerDetalleEncuesta(mysqli $conexion, int $idEvaluacion, ?string $ma
     foreach ($preguntas as $p) {
         $conteos[$p] = array_fill_keys($opciones, 0);
     }
-    $totalFilasMateria = 0;
+    $totalFilas = 0;
 
     foreach ($filas as $fila) {
         if (count($fila) < 4) {
             continue;
         }
-        if ($materia !== null && $idxMateria !== null) {
-            if (!isset($fila[$idxMateria]) || mb_strtolower(trim($fila[$idxMateria])) !== mb_strtolower(trim($materia))) {
-                continue;
-            }
-        }
-        $totalFilasMateria++;
+        $totalFilas++;
         $respuestas = array_slice($fila, 3);
         foreach ($respuestas as $i => $valor) {
             if (!isset($preguntas[$i])) {
@@ -340,31 +342,11 @@ function obtenerDetalleEncuesta(mysqli $conexion, int $idEvaluacion, ?string $ma
     }
 
     return [
-        'materia_filtrada' => $materia,
-        'respuestas_totales_materia' => $totalFilasMateria,
+        // Se mantiene el nombre del campo por compatibilidad con el
+        // frontend (services/seguimientoSyllabus.ts), aunque ya no filtra
+        // nada: ahora es simplemente el total de filas del CSV propio de
+        // esta asignatura.
+        'respuestas_totales_materia' => $totalFilas,
         'preguntas' => $detalle,
     ];
-}
-
-function obtenerMateriasDisponibles(mysqli $conexion, int $idEvaluacion): array
-{
-    $csv = descargarCsvEncuesta($conexion, $idEvaluacion);
-    if ($csv === null) {
-        return [];
-    }
-    $filas = $csv['filas'];
-    $headers = array_shift($filas);
-    $idxMateria = detectarIndiceMateria($headers);
-    if ($idxMateria === null) {
-        return [];
-    }
-    $materias = [];
-    foreach ($filas as $fila) {
-        if (isset($fila[$idxMateria]) && trim($fila[$idxMateria]) !== '') {
-            $materias[trim($fila[$idxMateria])] = true;
-        }
-    }
-    $lista = array_keys($materias);
-    sort($lista);
-    return $lista;
 }

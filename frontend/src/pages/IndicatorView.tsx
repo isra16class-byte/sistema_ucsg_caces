@@ -839,12 +839,16 @@ function TabCohorts({
 }
 
 // ── Tab Evidencias (split view) ────────────────────────────────────────────
-// Mapeo de sourceNum de I2 a tipo en evidencia_asignatura
+// Mapeo de sourceNum de I2 a tipo en evidencia_asignatura. 'encuesta_csv'
+// (slot 5) se agrega a partir de la migración
+// sql/migracion_i2_encuesta_csv_por_asignatura.sql (ver MEMORIA v18,
+// reemplaza lo decidido en v17 sección 41: el CSV ya no es evaluation-wide).
 const I2_SOURCE_NUM_TO_TIPO: Record<number, string> = {
   1: "syllabus",
   2: "acta_retroalimentacion",
   3: "acta_ajuste_curricular",
   4: "evidencia_difusion",
+  5: "encuesta_csv",
 };
 
 function TabEvidences({
@@ -911,10 +915,10 @@ function TabEvidences({
         );
 
         // Para I2, ademas de las tablas viejas (evidencias), traemos
-        // tambien la evidencia por asignatura (evidencia_asignatura)
-        // para los slots 2-4 que se suben a la tabla real. El slot 5 (CSV)
-        // usa directamente `guardadas`/`compartidas` (evaluation-wide) mas
-        // abajo -- no necesita fetch aparte.
+        // tambien la evidencia por asignatura (evidencia_asignatura) para
+        // los 5 slots (1-5, incl. CSV de encuesta) que se suben a la tabla
+        // real -- ver MEMORIA v18. `guardadas`/`compartidas` ya no se usan
+        // para el slot 5.
         const [guardadas, compartidas, evidenciaAsignatura] =
           await Promise.all([
             obtenerEvidenciasGuardadas(
@@ -940,7 +944,8 @@ function TabEvidences({
           let propia;
 let compartida;
 
-// ── I2 slots 2-4: usar evidencia_asignatura (tabla real) ──
+// ── I2 slots 1-5 (incl. CSV de encuesta, tipo 'encuesta_csv'): usar
+// evidencia_asignatura (tabla real) ──
 // Nota: la condicion depende del MAPEO (slot de I2), no de si
 // evidenciaAsignatura vino con datos. Si idAsignatura todavia no
 // resolvio (evidenciaAsignatura === null), estos slots deben mostrarse
@@ -972,43 +977,6 @@ if (
   return {
     ...slot,
     file: undefined,
-  };
-}
-
-// ── I2 slot 5 (CSV Resultados de Encuesta): el archivo en si es un unico
-// CSV evaluation-wide (no tiene tipo en evidencia_asignatura -- ver MEMORIA
-// seccion 41). Por decision explicita del usuario, el badge "Cargado" aqui
-// significa "el archivo existe", sin importar si ESTA materia tiene
-// respuestas dentro de el (eso se ve aparte en Resultados, vía el
-// "0 respuestas" en la nota de EF1/EF4). No confundir con los slots 1-4,
-// que sí son estrictamente por-asignatura.
-if (
-  ind.id === "I2" &&
-  slot.sourceNum === 5
-) {
-  const csvGuardado = guardadas.find(
-    (evidencia) => Number(evidencia.orden) === 5,
-  ) ?? compartidas.find(
-    (evidencia) => Number(evidencia.orden) === 5,
-  );
-
-  if (!csvGuardado) {
-    return {
-      ...slot,
-      file: undefined,
-    };
-  }
-
-  return {
-    ...slot,
-    file: {
-      originalName: csvGuardado.nombre_archivo,
-      fileName: csvGuardado.nombre_archivo,
-      url: csvGuardado.url_archivo,
-      serverUrl: csvGuardado.url_archivo,
-      type: csvGuardado.tipo,
-      size: 0,
-    } as NonNullable<typeof slot.file>,
   };
 }
 

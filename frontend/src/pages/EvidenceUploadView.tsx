@@ -67,11 +67,17 @@ export default function EvidenceUploadView({ career, indicators, onChange, onBac
   const [guardando, setGuardando] = useState(false);
 
   // ── Resolución de id_asignatura real para I2 ─────────────────────────
+  // 'encuesta_csv' (slot 5) se agrega a partir de la migración
+  // sql/migracion_i2_encuesta_csv_por_asignatura.sql: el CSV de encuesta
+  // ahora se sube por-asignatura igual que los otros 4 slots, en vez de ser
+  // el mecanismo evaluation-wide de la tabla vieja `evidencias` (ver
+  // MEMORIA v18 -- reemplaza lo decidido en v17 sección 41).
   const I2_SLOT_TIPO: Record<number, string> = {
     1: "syllabus",
     2: "acta_retroalimentacion",
     3: "acta_ajuste_curricular",
     4: "evidencia_difusion",
+    5: "encuesta_csv",
   };
   const [asignaturaId, setAsignaturaId] = useState<number | null>(null);
 
@@ -403,17 +409,15 @@ useEffect(() => {
                 // patrón que el slot 1 (arriba) y que TabEvidences en
                 // IndicatorView.tsx, que nunca tuvo este fallback.
                 //
-                // Slot 5 (CSV Resultados de Encuesta) es la EXCEPCIÓN: el
-                // enum de `evidencia_asignatura` no tiene un tipo para csv/
-                // encuesta -- ese archivo siempre fue evaluation-wide, subido
-                // una sola vez por evaluación vía el mecanismo viejo (tabla
-                // `evidencias`, ver commit d59e1d1d). Por eso NO entra al
-                // bloque estricto: sigue usando `guardadas`, igual que
-                // TabEvidences en IndicatorView.tsx (que sí lo tiene
-                // correcto y por eso aparece "cargado" en todas las
-                // asignaturas de la evaluación -- comportamiento esperado,
-                // no bug). Si en el futuro se quiere CSV por-asignatura, hay
-                // que agregarle un tipo a la tabla real primero.
+                // Slot 5 (CSV Resultados de Encuesta) YA NO es una
+                // excepción (ver MEMORIA v18, reemplaza lo decidido en v17
+                // sección 41): a partir de la migración
+                // sql/migracion_i2_encuesta_csv_por_asignatura.sql,
+                // 'encuesta_csv' es un tipo más en evidencia_asignatura, y
+                // el slot 5 entra al mismo bloque estricto que 2-4 (I2_SLOT_TIPO
+                // ya lo mapea arriba). El bloque `slotTipo === undefined` de
+                // abajo queda como fallback genérico para I2, pero ya
+                // ningún slot de I2 cae ahí.
                 const slotTipo = I2_SLOT_TIPO[slot.sourceNum];
                 const evidencia = catalogoI2.find(
                   (item) => item.orden === slot.sourceNum,
@@ -747,7 +751,8 @@ useEffect(() => {
 
     const esCsv = slot.acceptedType === "csv";
 
-  // ── I2: slots 2-4 → subir a evidencia_asignatura (no a tabla evidencias) ──
+  // ── I2: slots 1-5 (incl. CSV de encuesta) → subir a evidencia_asignatura,
+  // no a la tabla vieja `evidencias` (ver MEMORIA v18) ──
   if (
     indicator.id === "I2" &&
     I2_SLOT_TIPO[slot.sourceNum] !== undefined
@@ -783,14 +788,14 @@ useEffect(() => {
         },
       });
 
-      toast.success("PDF guardado correctamente", {
+      toast.success(esCsv ? "CSV guardado correctamente" : "PDF guardado correctamente", {
         description: "La evidencia se subió a Google Drive y se registró en la asignatura.",
       });
     } catch (error) {
       if (!activoSubida) return;
       updateSlot(indicator.id, {
         ...slot,
-        error: error instanceof Error ? error.message : "No se pudo procesar el PDF.",
+        error: error instanceof Error ? error.message : "No se pudo procesar el archivo.",
       });
       toast.error("No se pudo guardar el archivo", {
         description: error instanceof Error ? error.message : "Ocurrió un error inesperado.",

@@ -76,12 +76,17 @@ export function obtenerResultadoCohorte(idCohorte: number, idEvaluacion: number,
   return getJson(`${BASE}/resultado_cohorte.php?${params.toString()}`);
 }
 
-// ── Evidencia por asignatura (syllabus, actas, difusión) ────────────────
+// ── Evidencia por asignatura (syllabus, actas, difusión, encuesta) ──────
+// 'encuesta_csv' (slot 5 de I2) se agrega a partir de la migración
+// sql/migracion_i2_encuesta_csv_por_asignatura.sql: el CSV de la encuesta
+// ahora se sube por-asignatura igual que los otros 4 documentos, en vez de
+// ser un único archivo evaluation-wide (ver MEMORIA v18).
 export type TipoEvidenciaAsignatura =
   | "syllabus"
   | "acta_retroalimentacion"
   | "acta_ajuste_curricular"
-  | "evidencia_difusion";
+  | "evidencia_difusion"
+  | "encuesta_csv";
 
 export interface EvidenciaAsignaturaItem {
   tipo: TipoEvidenciaAsignatura;
@@ -102,7 +107,10 @@ export function obtenerEvidenciaAsignatura(idAsignatura: number): Promise<Eviden
 
 // ── Detalle de encuesta de heteroevaluación (23 preguntas) ──────────────
 // Alimenta el export de PDF: preguntas EF1/EF4 con conteo de respuestas por
-// materia, y el resto de las 23 para el anexo.
+// materia, y el resto de las 23 para el anexo. Desde que el CSV es
+// por-asignatura (ver MEMORIA v18), respuestas_totales_materia es
+// simplemente el total de filas del CSV propio de esa asignatura -- ya no
+// hay "materia_filtrada" porque no se filtra nada.
 export interface PreguntaEncuestaDetalle {
   numero: number;
   texto: string | null;
@@ -113,7 +121,6 @@ export interface PreguntaEncuestaDetalle {
 }
 
 export interface EncuestaDetalle {
-  materia_filtrada: string | null;
   respuestas_totales_materia: number;
   preguntas: PreguntaEncuestaDetalle[];
 }

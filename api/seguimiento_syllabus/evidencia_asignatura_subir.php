@@ -16,7 +16,10 @@ if (!isset($_FILES['archivo'])) {
     responderJson(false, 'No se recibió ningún archivo.', [], 400);
 }
 
-$errorValidacion = validarPdf($_FILES['archivo']);
+// El slot 'encuesta_csv' (CSV de resultados de encuesta, ver MEMORIA v18)
+// es CSV; el resto de TIPOS_POR_ASIGNATURA sigue siendo PDF.
+$esCsv = $tipo === 'encuesta_csv';
+$errorValidacion = $esCsv ? validarCsv($_FILES['archivo']) : validarPdf($_FILES['archivo']);
 if ($errorValidacion !== null) {
     responderJson(false, $errorValidacion, [], 400);
 }
@@ -38,7 +41,8 @@ if (!$contexto) {
     responderJson(false, 'Asignatura no encontrada.', [], 404);
 }
 
-$nombreArchivoDrive = sprintf('%s_%s_%s.pdf', $tipo, preg_replace('/[^A-Za-z0-9]+/', '_', $contexto['asignatura']), date('Ymd_His'));
+$extension = $esCsv ? 'csv' : 'pdf';
+$nombreArchivoDrive = sprintf('%s_%s_%s.%s', $tipo, preg_replace('/[^A-Za-z0-9]+/', '_', $contexto['asignatura']), date('Ymd_His'), $extension);
 
 try {
     $subida = subirArchivoDrive(
@@ -47,10 +51,11 @@ try {
         $contexto['carrera'],
         $contexto['cohorte'],
         $contexto['pao'],
-        $contexto['asignatura']
+        $contexto['asignatura'],
+        $esCsv ? 'text/csv' : 'application/pdf'
     );
 } catch (Throwable $e) {
-    responderJson(false, 'No se pudo subir el PDF a Google Drive.', ['detalle' => $e->getMessage()], 502);
+    responderJson(false, 'No se pudo subir el archivo a Google Drive.', ['detalle' => $e->getMessage()], 502);
 }
 
 $idUsuario = intval($_SESSION['id_usuario']);

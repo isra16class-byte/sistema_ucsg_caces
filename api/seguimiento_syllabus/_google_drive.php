@@ -12,8 +12,12 @@
 require_once __DIR__ . '/../google_drive/drive_helpers.php';
 
 /**
- * Sube (o reemplaza si ya existe) un PDF dentro de:
- *   Sistema CACES / <carrera> / <cohorte> / <pao> / <asignatura> / archivo.pdf
+ * Sube (o reemplaza si ya existe) un archivo dentro de:
+ *   Sistema CACES / <carrera> / <cohorte> / <pao> / <asignatura> / archivo.*
+ *
+ * $mimeType por defecto sigue siendo PDF (todos los llamadores existentes
+ * son PDF); el slot de CSV de encuesta (tipo 'encuesta_csv', ver MEMORIA
+ * v18) es el único que pasa 'text/csv' explícitamente.
  *
  * @return array{nombre_archivo:string, url_archivo:string, id_archivo:string}
  */
@@ -23,7 +27,8 @@ function subirArchivoDrive(
     string $nombreCarrera,
     string $cohorte,
     string $pao,
-    string $asignatura
+    string $asignatura,
+    string $mimeType = 'application/pdf'
 ): array {
     $cliente = require __DIR__ . '/../google_drive/cliente_autorizado.php';
     $drive = new Google\Service\Drive($cliente);
@@ -50,7 +55,7 @@ function subirArchivoDrive(
 
     $contenido = file_get_contents($rutaTemporal);
     if ($contenido === false) {
-        throw new RuntimeException('No se pudo leer el PDF temporal.');
+        throw new RuntimeException('No se pudo leer el archivo temporal.');
     }
 
     if (count($existentes) > 0) {
@@ -58,7 +63,7 @@ function subirArchivoDrive(
         $archivoDrive = $drive->files->update(
             $idArchivo,
             new Google\Service\Drive\DriveFile(['name' => $nombreArchivo]),
-            ['data' => $contenido, 'mimeType' => 'application/pdf', 'uploadType' => 'multipart', 'fields' => 'id,name,webViewLink,webContentLink']
+            ['data' => $contenido, 'mimeType' => $mimeType, 'uploadType' => 'multipart', 'fields' => 'id,name,webViewLink,webContentLink']
         );
     } else {
         $metadata = new Google\Service\Drive\DriveFile([
@@ -67,7 +72,7 @@ function subirArchivoDrive(
         ]);
         $archivoDrive = $drive->files->create(
             $metadata,
-            ['data' => $contenido, 'mimeType' => 'application/pdf', 'uploadType' => 'multipart', 'fields' => 'id,name,webViewLink,webContentLink']
+            ['data' => $contenido, 'mimeType' => $mimeType, 'uploadType' => 'multipart', 'fields' => 'id,name,webViewLink,webContentLink']
         );
     }
 
@@ -109,6 +114,34 @@ function validarPdf(array $archivo): ?string
     $mime = $finfo->file($archivo['tmp_name']);
     if ($extension !== 'pdf' || $mime !== 'application/pdf') {
         return 'Solo se aceptan archivos PDF válidos.';
+    }
+    return null;
+}
+
+/**
+ * Validación de CSV para el slot 'encuesta_csv' (ver MEMORIA v18): mismo
+ * límite de tamaño que validarPdf, pero exige extensión .csv y un MIME real
+ * de texto plano/csv (finfo suele reportar CSV como text/plain o text/csv
+ * según el contenido, nunca application/pdf ni binarios).
+ */
+function validarCsv(array $archivo): ?string
+{
+    if ($archivo['error'] !== UPLOAD_ERR_OK) {
+        return 'Ocurrió un error al recibir el archivo.';
+    }
+    $tamanoMaximo = 25 * 1024 * 1024;
+    if ($archivo['size'] > $tamanoMaximo) {
+        return 'El archivo no debe superar los 25 MB.';
+    }
+    $extension = strtolower(pathinfo($archivo['name'], PATHINFO_EXTENSION));
+    if ($extension !== 'csv') {
+        return 'Solo se aceptan archivos CSV.';
+    }
+    $finfo = new finfo(FILEINFO_MIME_TYPE);
+    $mime = $finfo->file($archivo['tmp_name']);
+    $mimesValidos = ['text/plain', 'text/csv', 'application/csv', 'text/x-csv', 'application/vnd.ms-excel'];
+    if (!in_array($mime, $mimesValidos, true)) {
+        return 'Solo se aceptan archivos CSV válidos.';
     }
     return null;
 }
