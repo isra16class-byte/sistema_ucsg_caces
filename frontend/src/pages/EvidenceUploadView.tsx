@@ -127,7 +127,17 @@ export default function EvidenceUploadView({ career, indicators, onChange, onBac
           return;
         }
         const asignaturas = await obtenerAsignaturas(periodo.id_periodoacademico);
-        const match = asignaturas.find((a) => a.nombre === materia);
+        // Comparación case-insensitive: el selector de materia (mock UI, Title
+        // Case) y la tabla `asignatura` real (sentence case en varias filas) no
+        // usan el mismo estilo de mayúsculas/minúsculas para el mismo nombre.
+        // Antes de este fix, la comparación exacta (===) fallaba en silencio
+        // para esos casos y dejaba asignaturaId en null, bloqueando la subida
+        // con "No se pudo determinar la asignatura" aunque la materia sí
+        // existiera en la BD (ver captura del usuario, 19 jul 2026).
+        const materiaNorm = materia.trim().toLowerCase();
+        const match = asignaturas.find(
+          (a) => a.nombre.trim().toLowerCase() === materiaNorm,
+        );
         if (!cancelado) setAsignaturaId(match?.id_asignatura ?? null);
       } catch {
         if (!cancelado) setAsignaturaId(null);

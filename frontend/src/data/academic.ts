@@ -8,6 +8,14 @@ export const PAO_OPTIONS = [
 
 export const MODULE_OPTIONS = ["A", "B", "C"];
 
+// Lista fija (mock) usada solo para poblar el selector de materia del wizard,
+// en Title Case para verse bien en UI. La resolución real de asignaturaId
+// (EvidenceUploadView.tsx, resolverAsignatura()) compara este nombre contra
+// la tabla `asignatura` real de forma case-insensitive, así que las
+// diferencias de mayúsculas/minúsculas entre esta lista y la BD no rompen
+// nada. "Práctica Laboral" y "Servicio Comunitario" (antes en PAO 2) se
+// quitaron: no existen como fila en `asignatura` (el periodo académico 2
+// real solo tiene 6 materias, no 8) — decisión confirmada con el usuario.
 export const MATERIAS_BY_PAO_MODULE: Record<
   string,
   Record<string, string[]>
@@ -37,12 +45,10 @@ export const MATERIAS_BY_PAO_MODULE: Record<
     ],
     B: [
       "Fundamentos de Bases de Datos",
-      "Práctica Laboral",
       "Humanismo y Sociedad",
     ],
     C: [
       "Emprendimiento e Innovación",
-      "Servicio Comunitario",
     ],
   },
 
