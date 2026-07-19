@@ -24,6 +24,8 @@ import {
   leerMatriculadosPdf,
   leerPdfTitulacion,
   guardarDatoTitulacion,
+  leerPdfDesercion,
+  guardarDatoDesercion,
 } from "../services/evidencias";
 
 import {
@@ -784,21 +786,30 @@ useEffect(() => {
 
   let activo = true;
 
-  async function cargarCompartidasDesercion() {
+  async function cargarEvidenciasDesercion() {
     setLoadingCatalogo(true);
     setCatalogoError("");
 
     try {
-      const evaluacion = await obtenerEvaluacion(
-        career.code,
-        cohort.replace(/\s+/g, ""),
-      );
+      const [catalogo, evaluacion] = await Promise.all([
+        obtenerCatalogoEvidencias(4),
+        obtenerEvaluacion(
+          career.code,
+          cohort.replace(/\s+/g, ""),
+        ),
+      ]);
 
-      const compartidas =
-        await obtenerEvidenciasCompartidas(
-          evaluacion.id_evaluacion,
-          4,
-        );
+      const [guardadas, compartidas] =
+        await Promise.all([
+          obtenerEvidenciasGuardadas(
+            evaluacion.id_evaluacion,
+            4,
+          ),
+          obtenerEvidenciasCompartidas(
+            evaluacion.id_evaluacion,
+            4,
+          ),
+        ]);
 
       if (!activo) {
         return;
@@ -810,58 +821,124 @@ useEffect(() => {
             return ind;
           }
 
-          const evidenciaMatriculados =
+          const evidenciaCompartidaPrimerNivel =
             compartidas.find(
               (evidencia) =>
                 evidencia.codigo_evidencia ===
                 "DOC.TIT.02",
             );
 
-          if (!evidenciaMatriculados) {
-            return ind;
-          }
-
-          return {
-            ...ind,
-            slots: ind.slots.map((slot) => {
-              if (slot.sourceNum !== 1) {
-                return slot;
+          const nuevosSlots: EvidenceSlot[] =
+            ind.slots.map((slot) => {
+              /*
+               * Slot 1: matriculados de primer nivel.
+               * Se comparte desde I5 y no se vuelve a subir.
+               */
+              if (
+                slot.sourceNum === 1 &&
+                evidenciaCompartidaPrimerNivel
+              ) {
+                return {
+                  ...slot,
+                  label:
+                    "Estudiantes matriculados en primer nivel",
+                  idEvidencia:
+                    evidenciaCompartidaPrimerNivel.id_evidencia,
+                  codigoEvidencia:
+                    evidenciaCompartidaPrimerNivel.codigo_evidencia,
+                  nombreArchivoBase:
+                    evidenciaCompartidaPrimerNivel.nombre_archivo_base,
+                  descripcionCompleta:
+                    evidenciaCompartidaPrimerNivel.descripcion,
+                  sharedKey: "matriculados",
+                  sharedFrom:
+                    evidenciaCompartidaPrimerNivel.indicador_origen,
+                  file: {
+                    fileName:
+                      evidenciaCompartidaPrimerNivel.nombre_archivo,
+                    originalName:
+                      evidenciaCompartidaPrimerNivel.nombre_archivo,
+                    url:
+                      evidenciaCompartidaPrimerNivel.url_archivo,
+                    serverUrl:
+                      evidenciaCompartidaPrimerNivel.url_archivo,
+                    size: 0,
+                  },
+                  error: undefined,
+                };
               }
+
+              /*
+               * Slots 2 y 3: evidencias propias de I4.
+               * Aquí sí es indispensable cargar idCatalogo,
+               * codigoEvidencia y nombreArchivoBase.
+               */
+              const evidenciaCatalogo =
+                catalogo.find(
+                  (evidencia) =>
+                    Number(evidencia.orden) ===
+                    Number(slot.sourceNum),
+                );
+
+              const evidenciaGuardada =
+                evidenciaCatalogo
+                  ? guardadas.find(
+                      (evidencia) =>
+                        evidencia.id_catalogo ===
+                          evidenciaCatalogo.id_catalogo ||
+                        evidencia.codigo_evidencia ===
+                          evidenciaCatalogo.codigo_evidencia,
+                    )
+                  : undefined;
 
               return {
                 ...slot,
                 label:
-                  evidenciaMatriculados.titulo_corto,
+                  evidenciaCatalogo?.titulo_corto ??
+                  slot.label,
                 idCatalogo:
-                  evidenciaMatriculados.id_catalogo,
+                  evidenciaCatalogo?.id_catalogo ??
+                  slot.idCatalogo,
                 codigoEvidencia:
-                  evidenciaMatriculados.codigo_evidencia,
+                  evidenciaCatalogo?.codigo_evidencia ??
+                  slot.codigoEvidencia,
                 nombreArchivoBase:
-                  evidenciaMatriculados.nombre_archivo_base,
+                  evidenciaCatalogo?.nombre_archivo_base ??
+                  slot.nombreArchivoBase,
                 descripcionCompleta:
-                  evidenciaMatriculados.descripcion,
+                  evidenciaCatalogo?.descripcion ??
+                  slot.descripcionCompleta,
                 idEvidencia:
-                  evidenciaMatriculados.id_evidencia,
-
-                sharedKey: "matriculados",
+                  evidenciaGuardada?.id_evidencia ??
+                  slot.idEvidencia,
+                file: evidenciaGuardada
+                  ? {
+                      fileName:
+                        evidenciaGuardada.nombre_archivo,
+                      originalName:
+                        evidenciaGuardada.nombre_archivo,
+                      url:
+                        evidenciaGuardada.url_archivo,
+                      serverUrl:
+                        evidenciaGuardada.url_archivo,
+                      size: 0,
+                    }
+                  : slot.file,
+                sharedKey:
+                  slot.sourceNum === 1
+                    ? "matriculados"
+                    : undefined,
                 sharedFrom:
-                  evidenciaMatriculados.indicador_origen,
-
-                file: {
-                  fileName:
-                    evidenciaMatriculados.nombre_archivo,
-                  originalName:
-                    evidenciaMatriculados.nombre_archivo,
-                  url:
-                    evidenciaMatriculados.url_archivo,
-                  serverUrl:
-                    evidenciaMatriculados.url_archivo,
-                  size: 0,
-                },
-
-                error: undefined,
+                  slot.sourceNum === 1
+                    ? slot.sharedFrom
+                    : undefined,
+                error: slot.error,
               };
-            }),
+            });
+
+          return {
+            ...ind,
+            slots: nuevosSlots,
           };
         }),
       );
@@ -873,7 +950,7 @@ useEffect(() => {
       setCatalogoError(
         error instanceof Error
           ? error.message
-          : "No se pudieron cargar las evidencias compartidas.",
+          : "No se pudieron cargar las evidencias de deserción.",
       );
     } finally {
       if (activo) {
@@ -882,7 +959,7 @@ useEffect(() => {
     }
   }
 
-  cargarCompartidasDesercion();
+  void cargarEvidenciasDesercion();
 
   return () => {
     activo = false;
@@ -1128,76 +1205,169 @@ if (slot.codigoEvidencia === "DOC.TIT.02") {
       career.code,
       cohort.replace(/\s+/g, ""),
     );
-    let resultadoTitulacion:
-  | {
-      total: number;
-      tipo:
-        | "matriculados"
-        | "graduados";
-      tasa: number | null;
-    }
-  | null = null;
 
-if (
-  indicator.id === "I5" &&
-  (
-    slot.codigoEvidencia === "DOC.TIT.01" ||
-    slot.codigoEvidencia === "DOC.TIT.02"
-  )
-) {
-  /*
-   * Según tu catálogo:
-   * DOC.TIT.01 = estudiantes graduados
-   * DOC.TIT.02 = estudiantes matriculados.
-   */
-  const tipoDato =
-    slot.codigoEvidencia === "DOC.TIT.01"
-      ? "graduados"
-      : "matriculados";
+    const cohorteNormalizada =
+      cohort.replace(/\s+/g, "").toUpperCase();
 
-  const lectura = await leerPdfTitulacion(
-    archivo,
-    tipoDato,
-  );
+    let descripcionResultado:
+      | string
+      | null = null;
 
-  const cohorteNormalizada =
-    cohort.replace(/\s+/g, "").toUpperCase();
-
-  if (
-    lectura.cohorte_detectada &&
-    lectura.cohorte_detectada !==
-      cohorteNormalizada
-  ) {
-    throw new Error(
-      `El PDF corresponde a la cohorte ${lectura.cohorte_detectada}, pero está seleccionada la cohorte ${cohorteNormalizada}.`,
-    );
-  }
-
-  const guardadoTitulacion =
-    await guardarDatoTitulacion({
-      idEvaluacion:
-        evaluacion.id_evaluacion,
-      cohorte: cohorteNormalizada,
-      ...(tipoDato === "matriculados"
-        ? {
-            matriculados:
-              lectura.total,
-          }
-        : {
-            graduados:
-              lectura.total,
-          }),
-    });
-
-  resultadoTitulacion = {
-    total: lectura.total,
-    tipo: tipoDato,
-    tasa:
-      guardadoTitulacion.tasa,
-  };
-}
     /*
-     * 4. Registrar o actualizar inmediatamente
+     * 4A. Lectura y cálculo de Tasa de Titulación (I5).
+     * Según el catálogo: DOC.TIT.01 = graduados, DOC.TIT.02 = matriculados.
+     */
+    if (
+      indicator.id === "I5" &&
+      (
+        slot.codigoEvidencia === "DOC.TIT.01" ||
+        slot.codigoEvidencia === "DOC.TIT.02"
+      )
+    ) {
+      const tipoDato =
+        slot.codigoEvidencia === "DOC.TIT.01"
+          ? "graduados"
+          : "matriculados";
+
+      const lectura = await leerPdfTitulacion(
+        archivo,
+        tipoDato,
+      );
+
+      if (
+        lectura.cohorte_detectada &&
+        lectura.cohorte_detectada !==
+          cohorteNormalizada
+      ) {
+        throw new Error(
+          `El PDF corresponde a la cohorte ${lectura.cohorte_detectada}, pero está seleccionada la cohorte ${cohorteNormalizada}.`,
+        );
+      }
+
+      const guardadoTitulacion =
+        await guardarDatoTitulacion({
+          idEvaluacion:
+            evaluacion.id_evaluacion,
+          cohorte: cohorteNormalizada,
+          ...(tipoDato === "matriculados"
+            ? {
+                matriculados:
+                  lectura.total,
+              }
+            : {
+                graduados:
+                  lectura.total,
+              }),
+        });
+
+      /*
+       * El PDF de matriculados de primer nivel se comparte con I4.
+       * Por eso también se registra como dato inicial para la
+       * Tasa de Deserción.
+       */
+      if (tipoDato === "matriculados") {
+        await guardarDatoDesercion({
+          idEvaluacion:
+            evaluacion.id_evaluacion,
+          cohorte: cohorteNormalizada,
+          iniciaronPrimerNivel:
+            lectura.total,
+        });
+      }
+
+      descripcionResultado =
+        guardadoTitulacion.tasa !== null
+          ? `${
+              tipoDato === "matriculados"
+                ? "Matriculados"
+                : "Graduados"
+            } detectados: ${
+              lectura.total
+            }. Tasa de titulación calculada: ${
+              guardadoTitulacion.tasa
+            }%.`
+          : `${
+              tipoDato === "matriculados"
+                ? "Matriculados"
+                : "Graduados"
+            } detectados: ${
+              lectura.total
+            }. Falta el otro PDF para calcular la tasa de titulación.`;
+    }
+
+    /*
+     * 4B. Lectura y cálculo de Tasa de Deserción (I4).
+     *
+     * Slot 1 = primer nivel (compartido con I5)
+     * Slot 2 = segundo año
+     * Slot 3 = estudiantes que no continuaron
+     */
+    if (
+      indicator.id === "I4" &&
+      (
+        slot.sourceNum === 1 ||
+        slot.sourceNum === 2 ||
+        slot.sourceNum === 3
+      )
+    ) {
+      const tipoDato =
+        slot.sourceNum === 1
+          ? "primer_nivel"
+          : slot.sourceNum === 2
+            ? "segundo_anio"
+            : "no_continuaron";
+
+      const lectura = await leerPdfDesercion(
+        archivo,
+        tipoDato,
+      );
+
+      if (
+        lectura.cohorte_detectada &&
+        lectura.cohorte_detectada !==
+          cohorteNormalizada
+      ) {
+        throw new Error(
+          `El PDF corresponde a la cohorte ${lectura.cohorte_detectada}, pero está seleccionada la cohorte ${cohorteNormalizada}.`,
+        );
+      }
+
+      const guardadoDesercion =
+        await guardarDatoDesercion({
+          idEvaluacion:
+            evaluacion.id_evaluacion,
+          cohorte: cohorteNormalizada,
+          ...(tipoDato === "primer_nivel"
+            ? {
+                iniciaronPrimerNivel:
+                  lectura.total,
+              }
+            : tipoDato === "segundo_anio"
+              ? {
+                  matriculadosSegundoAnio:
+                    lectura.total,
+                }
+              : {
+                  noContinuaron:
+                    lectura.total,
+                }),
+        });
+
+      const nombreDato =
+        tipoDato === "primer_nivel"
+          ? "Estudiantes de primer nivel"
+          : tipoDato === "segundo_anio"
+            ? "Matriculados en segundo año"
+            : "Estudiantes que no continuaron";
+
+      descripcionResultado =
+        guardadoDesercion.tasa !== null
+          ? `${nombreDato} detectados: ${lectura.total}. Tasa de deserción calculada: ${guardadoDesercion.tasa}%.`
+          : `${nombreDato} detectados: ${lectura.total}. Faltan datos para calcular la tasa de deserción.`;
+    }
+
+    /*
+     * 5. Registrar o actualizar inmediatamente
      * la URL de Google Drive en MySQL.
      */
     const guardado = await guardarEvidencia({
@@ -1222,7 +1392,7 @@ if (
     }
 
     /*
-     * 5. Actualizar la interfaz.
+     * 6. Actualizar la interfaz.
      */
     updateSlot(indicator.id, {
       ...slot,
@@ -1242,27 +1412,9 @@ if (
     toast.success(
       esCsv ? "CSV guardado correctamente" : "PDF guardado correctamente",
       {
-      description: resultadoTitulacion
-      ? resultadoTitulacion.tasa !== null
-        ? `${
-            resultadoTitulacion.tipo ===
-            "matriculados"
-              ? "Matriculados"
-              : "Graduados"
-          } detectados: ${
-            resultadoTitulacion.total
-          }. Tasa calculada: ${
-            resultadoTitulacion.tasa
-          }%.`
-        : `${
-            resultadoTitulacion.tipo ===
-            "matriculados"
-              ? "Matriculados"
-              : "Graduados"
-          } detectados: ${
-            resultadoTitulacion.total
-          }. Falta el otro PDF para calcular la tasa.`
-      : "El documento se subió a Google Drive y su URL se actualizó en MySQL.",  
+        description:
+          descripcionResultado ??
+          "El documento se subió a Google Drive y su URL se actualizó en MySQL.",
       },
     );
   } catch (error) {

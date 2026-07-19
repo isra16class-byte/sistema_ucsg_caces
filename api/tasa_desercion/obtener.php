@@ -42,13 +42,15 @@ if ($idEvaluacion <= 0) {
 
 $sql = "
     SELECT
+        id_dato,
         id_evaluacion,
         cohorte,
-        matriculados,
-        graduados,
+        iniciaron_primer_nivel,
+        matriculados_segundo_anio,
+        no_continuaron,
         tasa,
         fecha_actualizacion
-    FROM datos_tasa_titulacion
+    FROM datos_tasa_desercion
     WHERE id_evaluacion = ?
     ORDER BY fecha_actualizacion DESC
 ";
@@ -91,20 +93,28 @@ $datos = [];
 
 while ($fila = $resultado->fetch_assoc()) {
     $datos[] = [
+        "id_dato" =>
+            intval($fila["id_dato"]),
+
         "id_evaluacion" =>
             intval($fila["id_evaluacion"]),
 
         "cohorte" =>
             $fila["cohorte"],
 
-        "matriculados" =>
-            $fila["matriculados"] !== null
-                ? intval($fila["matriculados"])
+        "iniciaron_primer_nivel" =>
+            $fila["iniciaron_primer_nivel"] !== null
+                ? intval($fila["iniciaron_primer_nivel"])
                 : null,
 
-        "graduados" =>
-            $fila["graduados"] !== null
-                ? intval($fila["graduados"])
+        "matriculados_segundo_anio" =>
+            $fila["matriculados_segundo_anio"] !== null
+                ? intval($fila["matriculados_segundo_anio"])
+                : null,
+
+        "no_continuaron" =>
+            $fila["no_continuaron"] !== null
+                ? intval($fila["no_continuaron"])
                 : null,
 
         "tasa" =>
