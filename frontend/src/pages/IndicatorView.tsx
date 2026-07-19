@@ -912,7 +912,9 @@ function TabEvidences({
 
         // Para I2, ademas de las tablas viejas (evidencias), traemos
         // tambien la evidencia por asignatura (evidencia_asignatura)
-        // para los slots 2-4 que se suben a la tabla real.
+        // para los slots 2-4 que se suben a la tabla real. El slot 5 (CSV)
+        // usa directamente `guardadas`/`compartidas` (evaluation-wide) mas
+        // abajo -- no necesita fetch aparte.
         const [guardadas, compartidas, evidenciaAsignatura] =
           await Promise.all([
             obtenerEvidenciasGuardadas(
@@ -970,6 +972,43 @@ if (
   return {
     ...slot,
     file: undefined,
+  };
+}
+
+// ── I2 slot 5 (CSV Resultados de Encuesta): el archivo en si es un unico
+// CSV evaluation-wide (no tiene tipo en evidencia_asignatura -- ver MEMORIA
+// seccion 41). Por decision explicita del usuario, el badge "Cargado" aqui
+// significa "el archivo existe", sin importar si ESTA materia tiene
+// respuestas dentro de el (eso se ve aparte en Resultados, vía el
+// "0 respuestas" en la nota de EF1/EF4). No confundir con los slots 1-4,
+// que sí son estrictamente por-asignatura.
+if (
+  ind.id === "I2" &&
+  slot.sourceNum === 5
+) {
+  const csvGuardado = guardadas.find(
+    (evidencia) => Number(evidencia.orden) === 5,
+  ) ?? compartidas.find(
+    (evidencia) => Number(evidencia.orden) === 5,
+  );
+
+  if (!csvGuardado) {
+    return {
+      ...slot,
+      file: undefined,
+    };
+  }
+
+  return {
+    ...slot,
+    file: {
+      originalName: csvGuardado.nombre_archivo,
+      fileName: csvGuardado.nombre_archivo,
+      url: csvGuardado.url_archivo,
+      serverUrl: csvGuardado.url_archivo,
+      type: csvGuardado.tipo,
+      size: 0,
+    } as NonNullable<typeof slot.file>,
   };
 }
 
