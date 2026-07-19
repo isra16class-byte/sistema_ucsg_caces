@@ -39,14 +39,6 @@ import {
 } from "../utils/evaluation";
 
 import {
-  I3_EF_DEFS,
-  I3_MATERIAS_BY_PAO,
-  i3MateriaScore,
-  i3PaoScore,
-  i3PorcentajePorPuntos,
-} from "../data/evaluation";
-
-import {
   obtenerPeriodos,
   obtenerResultadoCohorte,
   obtenerEncuestaDetalle,
@@ -55,6 +47,15 @@ import {
   type ResultadoCohorte,
   type EvidenciaAsignaturaItem,
 } from "../services/seguimientoSyllabus";
+
+import {
+  obtenerResultadoCohorteTutorias,
+  obtenerEvidenciaTutorias,
+  type ResultadoCohorteTutorias,
+  type ResultadoAsignaturaTutorias,
+  type EfTutorias,
+  type EvidenciaTutoriasItem,
+} from "../services/tutoriasAcademicas";
 
 import { exportarPdfIndicador2 } from "../lib/exportarPdfIndicador2";
 
@@ -121,7 +122,7 @@ export default function IndicatorView({ indicator, onBack, career, cohort, pao, 
 
       <div className="flex-1 overflow-hidden min-h-0">
                 {tab === "results"   && isI2  && <TabResults    ind={indicator} career={career} cohort={cohort} pao={pao} onAsignaturaChange={(id) => setIdAsignaturaSeleccionada(id)}/>}
-        {tab === "results"   && isI3  && <TabResultsI3  ind={indicator} career={career} cohort={cohort} pao={pao} />}
+        {tab === "results"   && isI3  && <TabResultsI3  ind={indicator} career={career} cohort={cohort} pao={pao} onAsignaturaChange={(id) => setIdAsignaturaSeleccionada(id)}/>}
         {tab === "cohorts" && (
           <TabCohorts
             ind={indicator}
@@ -405,15 +406,90 @@ function TabResults({ ind, career, cohort, pao, onAsignaturaChange }: { ind: Ind
 }
 
 // ── Tab Resultados (I3 – Tutorías Académicas) ──────────────────────────────
-function TabResultsI3({ ind, career, cohort, pao }: { ind: IndicatorDef; career: Career | null; cohort: string; pao: number }) {
-  const [selectedIdx, setSelectedIdx] = useState(0);
-  const paoKey = `PAO ${pao}`;
-  const materias = I3_MATERIAS_BY_PAO[paoKey] ?? [];
+// Etiquetas legibles para los nombres de puntos de validación que devuelve
+// el backend (api/tutorias_academicas/_validacion_pdf.php, puntosPorEf()).
+// Solo presentación -- el backend es quien decide cumplido/no cumplido.
+const I3_PUNTO_LABELS: Record<string, string> = {
+  encabezado_institucional: "Encabezado institucional",
+  horas: "Horas",
+  firma_docente: "Firma de docente",
+  firma_director: "Firma de director de carrera",
+  reporte_mejora: "Reporte de mejora académica",
+  normativa: "Normativa institucional vigente",
+};
 
-  const materia   = materias[Math.min(selectedIdx, materias.length - 1)] ?? materias[0];
-  const materiaScore = materia ? i3MateriaScore(materia) : null;
-  const paoScore     = materias.length ? i3PaoScore(materias) : 0;
-  const paoSt        = getStatus(Math.round(paoScore));
+const I3_EF_ORDEN: EfTutorias[] = ["EF1", "EF2", "EF3", "EF4"];
+
+// ── Tab Resultados (I3 – Tutorías Académicas) ──────────────────────────────
+// Igual patrón que TabResults (I2): solo lectura, trae de la API real el
+// resultado ya calculado por api/tutorias_academicas/_calculo.php (pesos,
+// % por EF, escala) -- no se recalcula nada en el frontend.
+function TabResultsI3({ ind, career, cohort, pao, onAsignaturaChange }: { ind: IndicatorDef; career: Career | null; cohort: string; pao: number; onAsignaturaChange?: (idAsignatura: number | null) => void }) {
+  const [cargando, setCargando] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [resultadoCohorte, setResultadoCohorte] = useState<ResultadoCohorteTutorias | null>(null);
+  const [selectedIdx, setSelectedIdx] = useState(0);
+
+  const detalle = resultadoCohorte?.detalle_asignaturas ?? [];
+  const materia: ResultadoAsignaturaTutorias | undefined = detalle[Math.min(selectedIdx, detalle.length - 1)];
+
+  // Notificar al padre cuando cambie la asignatura seleccionada -- misma
+  // señal que usa TabEvidences para I2, necesaria para que I3 también
+  // pueda mostrar/subir evidencia de la materia correcta en esa pestaña.
+  useEffect(() => {
+    const id = materia?.id_asignatura ?? null;
+    onAsignaturaChange?.(id);
+  }, [selectedIdx, resultadoCohorte]);
+
+  useEffect(() => {
+    if (!career) return;
+    let cancelado = false;
+    setCargando(true);
+    setError(null);
+
+    (async () => {
+      try {
+        const evaluacion = await obtenerEvaluacion(career.code, cohort);
+        const periodos = await obtenerPeriodos(evaluacion.id_cohorte);
+        const periodo = periodos.find((p) => p.orden === pao);
+        if (!periodo) {
+          throw new Error(`No existe el PAO ${pao} para esta cohorte.`);
+        }
+        const rc = await obtenerResultadoCohorteTutorias(evaluacion.id_cohorte, evaluacion.id_evaluacion, periodo.id_periodoacademico);
+        if (cancelado) return;
+        setResultadoCohorte(rc);
+        setSelectedIdx(0);
+      } catch (e) {
+        if (!cancelado) setError(e instanceof Error ? e.message : "No se pudo cargar la información.");
+      } finally {
+        if (!cancelado) setCargando(false);
+      }
+    })();
+
+    return () => { cancelado = true; };
+  }, [career, cohort, pao]);
+
+  if (cargando) {
+    return (
+      <div className="h-full flex items-center justify-center gap-2" style={{ color: "#5A7295" }}>
+        <Loader2 size={16} className="animate-spin" /> Cargando resultados reales…
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center gap-2" style={{ color: "#DC2626" }}>
+        <AlertCircle size={20} />
+        <p className="text-sm font-medium">{error}</p>
+      </div>
+    );
+  }
+
+  const paoScore = resultadoCohorte?.valoracion_general ?? null;
+  const paoSt    = getStatus(Math.round(paoScore ?? 0));
+  const materiaScore = materia?.valoracion_general ?? null;
+  const materiaCompleta = materia?.estado_general === "completo";
 
   // ── SVG donut ring ────────────────────────────────────────────────────────
   function DonutRing({ pct, color }: { pct: number; color: string }) {
@@ -429,15 +505,13 @@ function TabResultsI3({ ind, career, cohort, pao }: { ind: IndicatorDef; career:
   }
 
   // ── EF ring card ──────────────────────────────────────────────────────────
-  function RingCard({ efIdx }: { efIdx: number }) {
-    const ef        = I3_EF_DEFS[efIdx];
-    const puntos    = materia.efPuntos[efIdx];
-    const sinDatos  = puntos === null;
-    const totalEf   = efIdx === 3 ? 4 : 3;
-    const pctEf     = sinDatos ? 0 : i3PorcentajePorPuntos(puntos, totalEf);
+  function RingCard({ efKey }: { efKey: EfTutorias }) {
+    const ef = materia?.efs?.[efKey];
+    const sinDatos = !ef || ef.estado === "sin_datos" || ef.pct === null;
+    const pctEf = sinDatos ? 0 : (ef!.pct as number);
     // Aporte real al resultado general = % del EF × peso del EF.
-    const contribPct = Math.round(ef.weight * pctEf);
-    const detalle   = materia.efDetalle?.[efIdx];
+    const contribPct = ef ? Math.round(ef.peso * pctEf) : 0;
+    const detalle = ef?.detalle_puntos ?? [];
 
     // Color por escala (mismos cortes CACES ≥75/≥50/≥25 que I2).
     const color = sinDatos
@@ -450,9 +524,9 @@ function TabResultsI3({ ind, career, cohort, pao }: { ind: IndicatorDef; career:
     return (
       <div className="bg-white rounded-2xl flex flex-col items-center justify-center gap-1.5 py-4"
         style={{ border: "1px solid rgba(27,58,107,0.08)" }}
-        title={detalle ? detalle.map(p => `${p.cumplido ? "✓" : "✗"} ${p.label}`).join("\n") : undefined}>
+        title={detalle.length ? detalle.map(p => `${p.cumplido ? "✓" : "✗"} ${I3_PUNTO_LABELS[p.nombre] ?? p.nombre}`).join("\n") : undefined}>
         <p className="text-xs font-semibold text-center leading-tight px-3"
-          style={{ color: "#5A7295" }}>{ef.label}</p>
+          style={{ color: "#5A7295" }}>{ef?.label ?? efKey}</p>
         <div className="relative flex items-center justify-center" style={{ width: 86, height: 86 }}>
           <DonutRing pct={sinDatos ? 0 : pctEf} color={sinDatos ? "#E5E7EB" : color} />
           <span className="absolute font-bold text-center leading-none"
@@ -464,7 +538,7 @@ function TabResultsI3({ ind, career, cohort, pao }: { ind: IndicatorDef; career:
           style={sinDatos
             ? { background: "#F3F4F6", color: "#9CA3AF" }
             : { background: "#EEF2F7", color: "#1B3A6B" }}>
-          {sinDatos ? "Sin datos" : `${puntos}/${totalEf} puntos · aporta ${contribPct}%`}
+          {sinDatos || !ef ? "Sin datos" : `${ef.cumplidos}/${ef.total_puntos} puntos · aporta ${contribPct}%`}
         </span>
       </div>
     );
@@ -484,33 +558,35 @@ function TabResultsI3({ ind, career, cohort, pao }: { ind: IndicatorDef; career:
             <p className="text-xs mt-0.5" style={{ color: "#5A7295" }}>Cohorte {cohort} · PAO {pao}</p>
             <div className="flex items-center gap-1.5 mt-1">
               <span className="text-xs font-bold uppercase tracking-widest" style={{ color: "#5A7295" }}>General PAO</span>
-              <span className="text-sm font-bold" style={{ color: paoSt.color, fontFamily: "'DM Mono',monospace" }}>
-                {Math.round(paoScore)}%
+              <span className="text-sm font-bold" style={{ color: paoScore === null ? "#9CA3AF" : paoSt.color, fontFamily: "'DM Mono',monospace" }}>
+                {paoScore === null ? "—" : `${Math.round(paoScore)}%`}
               </span>
-              <span className="text-xs font-semibold px-1.5 py-0.5 rounded-full"
-                style={{ background: paoSt.bg, color: paoSt.color }}>{paoSt.label}</span>
+              {paoScore !== null && (
+                <span className="text-xs font-semibold px-1.5 py-0.5 rounded-full"
+                  style={{ background: paoSt.bg, color: paoSt.color }}>{paoSt.label}</span>
+              )}
             </div>
           </div>
         </div>
 
-        {/* Subject list — uses I3_MATERIAS_BY_PAO */}
+        {/* Subject list — datos reales de resultado_cohorte.php */}
         <div className="flex-1 bg-white rounded-2xl overflow-hidden flex flex-col min-h-0"
           style={{ border: "1px solid rgba(27,58,107,0.08)" }}>
           <div className="px-4 py-2 flex-shrink-0" style={{ borderBottom: "1px solid rgba(27,58,107,0.07)", background: "#F8FAFD" }}>
             <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "#5A7295" }}>Asignaturas</p>
           </div>
           <div className="flex flex-col flex-1 overflow-auto">
-            {materias.map((m, mi) => {
+            {detalle.map((m, mi) => {
                     const active  = selectedIdx === mi;
-                    const score   = i3MateriaScore(m);
-                    const dotColor = score !== null ? "#16A34A" : "#CA8A04";
+                    const score   = m.valoracion_general;
+                    const dotColor = score === null ? "#CA8A04" : m.estado_general === "completo" ? "#16A34A" : "#CA8A04";
                     return (
-                      <button key={m.name} onClick={() => setSelectedIdx(mi)}
+                      <button key={m.id_asignatura} onClick={() => setSelectedIdx(mi)}
                         className="flex-shrink-0 w-full text-left px-3 flex items-center justify-between gap-2 transition-colors hover:bg-blue-50"
                         style={{ height: 38, borderBottom: "1px solid rgba(27,58,107,0.05)", background: active ? "#EEF5FF" : "transparent", borderLeft: `3px solid ${active ? "#0891B2" : "transparent"}` }}>
                         <div className="flex items-center gap-1.5 min-w-0">
                           <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: dotColor }} />
-                          <p className="text-xs font-semibold truncate" style={{ color: active ? "#0891B2" : "#0F1E3C" }}>{m.name}</p>
+                          <p className="text-xs font-semibold truncate" style={{ color: active ? "#0891B2" : "#0F1E3C" }}>{m.nombre_asignatura}</p>
                         </div>
                         {score !== null ? (
                           <span className="text-xs font-bold flex-shrink-0"
@@ -526,6 +602,9 @@ function TabResultsI3({ ind, career, cohort, pao }: { ind: IndicatorDef; career:
                       </button>
                     );
                   })}
+            {detalle.length === 0 && (
+              <p className="text-xs px-3 py-3" style={{ color: "#94A3B8" }}>No hay asignaturas cargadas para este PAO.</p>
+            )}
           </div>
         </div>
       </div>
@@ -535,14 +614,16 @@ function TabResultsI3({ ind, career, cohort, pao }: { ind: IndicatorDef; career:
         {/* Materia name card */}
         <div className="flex-shrink-0 bg-white rounded-2xl px-4 py-3 flex items-center justify-between gap-3"
           style={{ border: "1px solid rgba(27,58,107,0.08)" }}>
-          <p className="text-sm font-bold" style={{ fontFamily: "'Libre Baskerville',serif", color: "#0F1E3C" }}>{materia?.name ?? "—"}</p>
+          <p className="text-sm font-bold" style={{ fontFamily: "'Libre Baskerville',serif", color: "#0F1E3C" }}>{materia?.nombre_asignatura ?? "—"}</p>
           {materiaScore !== null ? (
             <div className="flex items-center gap-2 flex-shrink-0">
               <p className="text-xl font-bold leading-none" style={{ color: "#16A34A", fontFamily: "'DM Mono',monospace" }}>
                 {Math.round(materiaScore)}%
               </p>
               <p className="text-xs font-semibold px-2 py-0.5 rounded-full"
-                style={{ background: "#DCFCE7", color: "#16A34A" }}>Completo</p>
+                style={materiaCompleta ? { background: "#DCFCE7", color: "#16A34A" } : { background: "#FEF9C3", color: "#CA8A04" }}>
+                {materiaCompleta ? "Completo" : "Incompleto"}
+              </p>
             </div>
           ) : (
             <div className="flex items-center gap-2 flex-shrink-0">
@@ -554,7 +635,7 @@ function TabResultsI3({ ind, career, cohort, pao }: { ind: IndicatorDef; career:
         </div>
         {/* Ring grid */}
         <div className="flex-1 grid grid-cols-2 gap-3 min-h-0" style={{ gridTemplateRows: "1fr 1fr" }}>
-          {[0, 1, 2, 3].map((i) => <RingCard key={i} efIdx={i} />)}
+          {I3_EF_ORDEN.map((efKey) => <RingCard key={efKey} efKey={efKey} />)}
         </div>
       </div>
     </div>
@@ -851,6 +932,16 @@ const I2_SOURCE_NUM_TO_TIPO: Record<number, string> = {
   5: "encuesta_csv",
 };
 
+// I3 (Tutorías Académicas): mismo mecanismo por-asignatura que I2, sin
+// slots evaluation-wide -- los 4 slots del wizard mapean 1:1 a los 4 tipos
+// reales de evidencia_asignatura para este indicador.
+const I3_SOURCE_NUM_TO_TIPO: Record<number, string> = {
+  1: "plan_tutorias",
+  2: "registro_tutorias",
+  3: "informe_tutorias",
+  4: "evidencia_atencion",
+};
+
 function TabEvidences({
   ind,
   career,
@@ -918,8 +1009,9 @@ function TabEvidences({
         // tambien la evidencia por asignatura (evidencia_asignatura) para
         // los 5 slots (1-5, incl. CSV de encuesta) que se suben a la tabla
         // real -- ver MEMORIA v18. `guardadas`/`compartidas` ya no se usan
-        // para el slot 5.
-        const [guardadas, compartidas, evidenciaAsignatura] =
+        // para el slot 5. Para I3, mismo mecanismo pero via el endpoint
+        // real de tutorias academicas (incluye la validacion por puntos).
+        const [guardadas, compartidas, evidenciaAsignatura, evidenciaTutorias] =
           await Promise.all([
             obtenerEvidenciasGuardadas(
               evaluacion.id_evaluacion,
@@ -932,6 +1024,10 @@ function TabEvidences({
             // Solo para I2 con asignatura resuelta
             (ind.id === "I2" && idAsignatura !== null)
               ? obtenerEvidenciaAsignatura(idAsignatura)
+              : Promise.resolve(null),
+            // Solo para I3 con asignatura resuelta
+            (ind.id === "I3" && idAsignatura !== null)
+              ? obtenerEvidenciaTutorias(idAsignatura)
               : Promise.resolve(null),
           ]);
 
@@ -958,6 +1054,38 @@ if (
   const tipo = I2_SOURCE_NUM_TO_TIPO[slot.sourceNum];
   const item = evidenciaAsignatura?.find(
     (e: EvidenciaAsignaturaItem) => e.tipo === tipo,
+  );
+
+  if (item && item.subida && item.archivo) {
+    return {
+      ...slot,
+      file: {
+        originalName: item.archivo.nombre_archivo,
+        fileName: item.archivo.nombre_archivo,
+        url: item.archivo.url_archivo,
+        serverUrl: item.archivo.url_archivo,
+        size: 0,
+      } as NonNullable<typeof slot.file>,
+    };
+  }
+
+  // Si no hay evidencia en la tabla real, mostrar como sin archivo
+  return {
+    ...slot,
+    file: undefined,
+  };
+}
+
+// ── I3 slots 1-4: mismo patrón estricto que I2 arriba, pero contra el
+// endpoint real de tutorías académicas (evidencia_asignatura + validación
+// por puntos). Nunca cae al mecanismo viejo evaluation-wide. ──
+if (
+  ind.id === "I3" &&
+  I3_SOURCE_NUM_TO_TIPO[slot.sourceNum] !== undefined
+) {
+  const tipo = I3_SOURCE_NUM_TO_TIPO[slot.sourceNum];
+  const item = evidenciaTutorias?.find(
+    (e: EvidenciaTutoriasItem) => e.tipo === tipo,
   );
 
   if (item && item.subida && item.archivo) {

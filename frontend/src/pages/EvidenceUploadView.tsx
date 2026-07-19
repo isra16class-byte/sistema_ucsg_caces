@@ -38,6 +38,11 @@ import {
   obtenerPeriodos,
 } from "../services/seguimientoSyllabus";
 
+import {
+  subirEvidenciaTutorias,
+  obtenerEvidenciaTutorias,
+} from "../services/tutoriasAcademicas";
+
 import type {
   Career,
   EvidStep,
@@ -79,11 +84,25 @@ export default function EvidenceUploadView({ career, indicators, onChange, onBac
     4: "evidencia_difusion",
     5: "encuesta_csv",
   };
+
+  // ── I3 (Tutorías Académicas): mismo mecanismo por-asignatura que I2,
+  // pero con validación automática del PDF al subir (ver
+  // api/tutorias_academicas/_validacion_pdf.php) y evaluación cualitativa
+  // por puntos dentro de cada EF, no cuantitativa. Los 4 slots del wizard
+  // (App.tsx) mapean 1:1 a los 4 tipos de evidencia_asignatura de I3.
+  const I3_SLOT_TIPO: Record<number, string> = {
+    1: "plan_tutorias",
+    2: "registro_tutorias",
+    3: "informe_tutorias",
+    4: "evidencia_atencion",
+  };
   const [asignaturaId, setAsignaturaId] = useState<number | null>(null);
 
 
   useEffect(() => {
-    if (indicatorId !== "I2" || !pao || !cohort) {
+    // I3 usa el mismo mecanismo por-asignatura que I2 (ver I3_SLOT_TIPO
+    // arriba), así que necesita resolver asignaturaId igual que I2.
+    if (!["I2", "I3"].includes(indicatorId) || !pao || !cohort) {
       setAsignaturaId(null);
       return;
     }
@@ -579,8 +598,79 @@ useEffect(() => {
             };
           }),
         );
+      } else if (indicatorId === "I3") {
+        // --- I3 (Tutorías Académicas): igual patrón que I2 slots 1-4, pero
+        // sin evaluation-wide (I3 no tiene ningún slot compartido/CSV como
+        // I2) y sin fallback a la tabla vieja `evidencias` -- estrictamente
+        // por-asignatura desde el día 1, mismo criterio ya validado en I2
+        // (ver MEMORIA sección 39 punto 1). La metadata (label/idCatalogo/
+        // codigoEvidencia/etc.) sigue viniendo del catálogo propio de I3
+        // porque `procesarPdf` la exige antes de permitir la subida; el
+        // ARCHIVO y su validación (puntos cumplidos por EF) vienen de
+        // evidencia_asignatura vía el endpoint real de tutorías. ---
+        const catalogoI3 = await obtenerCatalogoEvidencias(3);
+
+        let evidenciaTutorias: Awaited<ReturnType<typeof obtenerEvidenciaTutorias>> | null = null;
+        if (asignaturaId !== null) {
+          try {
+            evidenciaTutorias = await obtenerEvidenciaTutorias(asignaturaId);
+          } catch {
+            // Si falla la consulta, el slot se muestra sin archivo (nunca
+            // cae al mecanismo viejo evaluation-wide).
+          }
+        }
+
+        if (!activo) {
+          return;
+        }
+
+        onChange(
+          indicators.map((ind) => {
+            if (ind.id !== "I3") {
+              return ind;
+            }
+
+            return {
+              ...ind,
+              slots: ind.slots.map((slot) => {
+                const evidencia = catalogoI3.find(
+                  (item) => item.orden === slot.sourceNum,
+                );
+
+                if (!evidencia) {
+                  return slot;
+                }
+
+                const tipo = I3_SLOT_TIPO[slot.sourceNum];
+                const item = evidenciaTutorias?.find((e) => e.tipo === tipo);
+
+                return {
+                  ...slot,
+                  label: evidencia.titulo_corto || slot.label,
+                  idCatalogo: evidencia.id_catalogo,
+                  codigoEvidencia: evidencia.codigo_evidencia,
+                  nombreArchivoBase: evidencia.nombre_archivo_base,
+                  descripcionCompleta: evidencia.descripcion,
+
+                  idEvidencia: undefined,
+
+                  file:
+                    item && item.subida && item.archivo
+                      ? {
+                          fileName: item.archivo.nombre_archivo,
+                          originalName: item.archivo.nombre_archivo,
+                          url: item.archivo.url_archivo,
+                          serverUrl: item.archivo.url_archivo,
+                          size: 0,
+                        }
+                      : undefined,
+                };
+              }),
+            };
+          }),
+        );
       } else {
-        // --- I1 (y cualquier otro indicador que no sea I2 en este branch) ---
+        // --- I1 (y cualquier otro indicador que no sea I2/I3 en este branch) ---
         const [catalogo, evaluacion] = await Promise.all([
           obtenerCatalogoEvidencias(idIndicadorReal),
           obtenerEvaluacion(
@@ -884,6 +974,64 @@ useEffect(() => {
       toast.success(esCsv ? "CSV guardado correctamente" : "PDF guardado correctamente", {
         description: "La evidencia se subió a Google Drive y se registró en la asignatura.",
       });
+    } catch (error) {
+      if (!activoSubida) return;
+      updateSlot(indicator.id, {
+        ...slot,
+        error: error instanceof Error ? error.message : "No se pudo procesar el archivo.",
+      });
+      toast.error("No se pudo guardar el archivo", {
+        description: error instanceof Error ? error.message : "Ocurrió un error inesperado.",
+      });
+    }
+    return;
+  }
+
+  // ── I3: slots 1-4 → subir a evidencia_asignatura vía el endpoint real de
+  // tutorías, que además valida el PDF automáticamente (puntos por EF) al
+  // guardarlo. Mismo patrón que I2 arriba, pero con su propio mecanismo de
+  // validación cualitativa (ver api/tutorias_academicas/_validacion_pdf.php) ──
+  if (
+    indicator.id === "I3" &&
+    I3_SLOT_TIPO[slot.sourceNum] !== undefined
+  ) {
+    if (asignaturaId === null) {
+      toast.error(
+        "No se pudo determinar la asignatura. Verifique la configuración de período y materia.",
+      );
+      return;
+    }
+
+    const tipo = I3_SLOT_TIPO[slot.sourceNum];
+    let activoSubida = true;
+
+    try {
+      const resultado = await subirEvidenciaTutorias({
+        idAsignatura: asignaturaId,
+        tipo: tipo as any,
+        archivo,
+      });
+
+      if (!activoSubida) return;
+
+      updateSlot(indicator.id, {
+        ...slot,
+        error: undefined,
+        file: {
+          fileName: archivo.name,
+          originalName: archivo.name,
+          url: resultado.url_archivo,
+          serverUrl: resultado.url_archivo,
+          size: archivo.size,
+        },
+      });
+
+      toast.success(
+        `PDF guardado y validado (${resultado.cumplidos}/${resultado.total_puntos} puntos cumplidos)`,
+        {
+          description: "La evidencia se subió a Google Drive y se validó automáticamente para " + resultado.ef + ".",
+        },
+      );
     } catch (error) {
       if (!activoSubida) return;
       updateSlot(indicator.id, {
