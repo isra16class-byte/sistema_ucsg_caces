@@ -20,6 +20,7 @@ import {
   obtenerPeriodos,
   obtenerResultadoCohorte,
 } from "../services/seguimientoSyllabus";
+import { obtenerResultadoCohorteTutorias } from "../services/tutoriasAcademicas";
 
 import type { UsuarioSesion } from "../services/auth";
 import type { Career, IndicatorDef } from "../types";
@@ -108,6 +109,64 @@ export default function DashboardView({
     }
 
     void cargarPAOsReales();
+
+    return () => {
+      cancelado = true;
+    };
+  }, [career, cohort]);
+
+  // ── PAOs reales para I3 (Tutorías Académicas) ──────────────────────
+  const [i3PaoScores, setI3PaoScores] = useState(PAO_INICIAL);
+
+  useEffect(() => {
+    let cancelado = false;
+
+    async function cargarPAOsRealesI3() {
+      try {
+        const evaluacion = await obtenerEvaluacion(
+          career.code,
+          cohort.replace(/\s+/g, ""),
+        );
+
+        const periodos = await obtenerPeriodos(evaluacion.id_cohorte);
+
+        const resultados = await Promise.all(
+          [1, 2, 3].map(async (orden) => {
+            const periodo = periodos.find((p) => p.orden === orden);
+
+            if (!periodo) {
+              return { pao: `PAO ${orden}`, pct: -1 };
+            }
+
+            const resultado = await obtenerResultadoCohorteTutorias(
+              evaluacion.id_cohorte,
+              evaluacion.id_evaluacion,
+              periodo.id_periodoacademico,
+            );
+
+            return {
+              pao: `PAO ${orden}`,
+              pct: resultado?.valoracion_general ?? -1,
+            };
+          }),
+        );
+
+        if (cancelado) {
+          return;
+        }
+
+        setI3PaoScores(resultados);
+      } catch (error) {
+        if (cancelado) {
+          return;
+        }
+
+        console.error("Error al cargar PAOs reales para I3:", error);
+        setI3PaoScores(PAO_INICIAL);
+      }
+    }
+
+    void cargarPAOsRealesI3();
 
     return () => {
       cancelado = true;
@@ -301,7 +360,12 @@ export default function DashboardView({
 
         <div className="flex gap-3 flex-1 min-h-0">
           <div className="h-full" style={{ flex: 2, minWidth: 0 }}>
-            <PaoGroupCard ind={indicators[2]} onClick={onSelect} fullHeight />
+            <PaoGroupCard
+              ind={indicators[2]}
+              onClick={onSelect}
+              fullHeight
+              paosOverride={i3PaoScores}
+            />
           </div>
 
           <IndCard
