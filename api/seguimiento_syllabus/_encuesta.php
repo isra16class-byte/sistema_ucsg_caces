@@ -172,32 +172,6 @@ function parseCsvString(string $contenido): array
     return $filas;
 }
 
-/**
- * Detecta el nombre del docente desde la columna fija #3 del CSV
- * (timestamp | materia | profesor | [P1]...[P23]). Si hay filas con
- * nombres distintos (error de tipeo, fila suelta, etc.), se queda con el
- * más frecuente. Devuelve null si el CSV no trae ningún valor utilizable.
- */
-function _extraerDocenteCsv(array $filas): ?string
-{
-    $conteo = [];
-    foreach ($filas as $fila) {
-        if (!isset($fila[2])) {
-            continue;
-        }
-        $nombre = trim($fila[2]);
-        if ($nombre === '') {
-            continue;
-        }
-        $conteo[$nombre] = ($conteo[$nombre] ?? 0) + 1;
-    }
-    if (empty($conteo)) {
-        return null;
-    }
-    arsort($conteo);
-    return array_key_first($conteo);
-}
-
 function buscarColumnasPregunta(array $preguntas, int $numero): array
 {
     $patron = '/\[P' . $numero . '[\.\]]/i';
@@ -215,9 +189,15 @@ function textoPregunta(string $header, int $numero): string
 /**
  * Calcula EF1/EF4 desde el CSV propio de la asignatura. Ya no recibe
  * $materia ni filtra filas por nombre -- el CSV completo pertenece a esta
- * asignatura (mismo formato de columnas de siempre: las primeras 3 son
- * timestamp/materia/profesor -- fijas para todo el archivo -- y de ahí en
- * adelante las preguntas [P1]..[P23]).
+ * asignatura.
+ *
+ * FORMATO REAL CONFIRMADO (20 jul 2026, contra el formulario oficial de la
+ * universidad, ver MEMORIA): el CSV NO trae columnas de materia/profesor --
+ * esos datos son texto fijo en la descripción del formulario, no preguntas
+ * con respuesta. La única columna fija es la #0 (timestamp); de ahí en
+ * adelante van directo las 23 preguntas [P1]..[P23]. (Antes se asumía,
+ * incorrectamente, que había 3 columnas fijas -- timestamp/materia/profesor
+ * -- heredado de un CSV de prueba que no correspondía al formulario real.)
  */
 function calcularEfDesdeCsv(mysqli $conexion, int $idAsignatura): ?array
 {
@@ -232,18 +212,18 @@ function calcularEfDesdeCsv(mysqli $conexion, int $idAsignatura): ?array
     }
 
     $headers = array_shift($filas);
-    $preguntas = array_slice($headers, 3);
+    $preguntas = array_slice($headers, 1);
 
     $totales = array_fill_keys($preguntas, 0);
     $conteos = array_fill_keys($preguntas, 0);
     $totalFilas = 0;
 
     foreach ($filas as $fila) {
-        if (count($fila) < 4) {
+        if (count($fila) < 2) {
             continue;
         }
         $totalFilas++;
-        $respuestas = array_slice($fila, 3);
+        $respuestas = array_slice($fila, 1);
         foreach ($respuestas as $i => $valor) {
             if (!isset($preguntas[$i])) {
                 continue;
@@ -293,7 +273,6 @@ function calcularEfDesdeCsv(mysqli $conexion, int $idAsignatura): ?array
         'respuestas' => $totalFilas,
         'promedio_general' => !empty($promedios) ? round(array_sum($promedios) / count($promedios), 1) : 0,
         'degradado' => $csv['degradado'],
-        'docente' => _extraerDocenteCsv($filas),
     ];
 }
 
@@ -310,7 +289,7 @@ function obtenerDetalleEncuesta(mysqli $conexion, int $idAsignatura): ?array
 
     $filas = $csv['filas'];
     $headers = array_shift($filas);
-    $preguntas = array_slice($headers, 3);
+    $preguntas = array_slice($headers, 1);
     $opciones = array_keys(PUNTAJE_MAP);
 
     $conteos = [];
@@ -320,11 +299,11 @@ function obtenerDetalleEncuesta(mysqli $conexion, int $idAsignatura): ?array
     $totalFilas = 0;
 
     foreach ($filas as $fila) {
-        if (count($fila) < 4) {
+        if (count($fila) < 2) {
             continue;
         }
         $totalFilas++;
-        $respuestas = array_slice($fila, 3);
+        $respuestas = array_slice($fila, 1);
         foreach ($respuestas as $i => $valor) {
             if (!isset($preguntas[$i])) {
                 continue;
