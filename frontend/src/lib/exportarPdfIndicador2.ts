@@ -233,8 +233,9 @@ function drawMasthead(
   // Ficha: Docente / Cohorte / PAO / Generado
   const yFicha = yBorde + 5;
   const colW = CONTENT_W / 4;
+  const docenteMuted = asignatura.docente === null || asignatura.docente === "";
   const meta: [string, string, boolean][] = [
-    ["Docente", asignatura.docente ?? "Sin asignar", true],
+    ["Docente", asignatura.docente ?? "Sin asignar", docenteMuted],
     ["Cohorte", `Cohorte ${cohortLabel}`, false],
     ["PAO", `PAO ${paoNumero}`, false],
     // Formato corto ("18 jul 2026, 08:43") en vez del largo ("18 de julio de 2026
@@ -494,6 +495,7 @@ function drawDetalleEncuesta(
 
   preguntasEF.forEach((p, i) => {
     const textoPregunta = p.texto ?? "(pregunta no encontrada en la encuesta actual)";
+    fuente(doc, "sans", 7.8, COLOR.ink);
     const lineasTexto = doc.splitTextToSize(textoPregunta, colTexto - 5);
     const rowH = Math.max(lineasTexto.length * 3.4 + 4, 9);
 
@@ -596,6 +598,7 @@ function drawAnexoPreguntas(
 
   encuestaDetalle.preguntas.forEach((p, i) => {
     const textoPregunta = p.texto ?? "(pregunta no encontrada en la encuesta actual)";
+    fuente(doc, "sans", 7.2, COLOR.ink);
     const lineasTexto = doc.splitTextToSize(textoPregunta, colTexto - 5);
     const rowH = Math.max(lineasTexto.length * 3.2 + 3.5, 8);
 
