@@ -552,22 +552,22 @@ function TabResultsI3({ ind, career, cohort, pao, onAsignaturaChange }: { ind: I
       {/* ── LEFT: materia list ───────────────────────────────────────── */}
       <div className="flex-1 flex flex-col gap-3 min-h-0 min-w-0">
 
-        {/* Header: PAO general left, selected subject right */}
+        {/* Career/Cohort/PAO card with Valoración General (agregado del PAO) */}
         <div className="flex-shrink-0 bg-white rounded-2xl px-4 py-3 flex items-center justify-between gap-3"
           style={{ border: "1px solid rgba(27,58,107,0.08)" }}>
           <div className="min-w-0">
             <p className="text-xs font-bold truncate" style={{ color: "#0F1E3C" }}>{career?.name || "—"}</p>
             <p className="text-xs mt-0.5" style={{ color: "#5A7295" }}>Cohorte {cohort} · PAO {pao}</p>
-            <div className="flex items-center gap-1.5 mt-1">
-              <span className="text-xs font-bold uppercase tracking-widest" style={{ color: "#5A7295" }}>General PAO</span>
-              <span className="text-sm font-bold" style={{ color: paoScore === null ? "#9CA3AF" : paoSt.color, fontFamily: "'DM Mono',monospace" }}>
-                {paoScore === null ? "—" : `${Math.round(paoScore)}%`}
-              </span>
-              {paoScore !== null && (
-                <span className="text-xs font-semibold px-1.5 py-0.5 rounded-full"
-                  style={{ background: paoSt.bg, color: paoSt.color }}>{paoSt.label}</span>
-              )}
-            </div>
+          </div>
+          <div className="text-right flex-shrink-0">
+            <p className="text-xs font-bold uppercase tracking-widest mb-0.5" style={{ color: "#5A7295" }}>Valoración General</p>
+            <p className="text-2xl font-bold leading-none" style={{ color: paoScore === null ? "#9CA3AF" : paoSt.color, fontFamily: "'DM Mono',monospace" }}>
+              {paoScore === null ? "—" : `${Math.round(paoScore)}%`}
+            </p>
+            {paoScore !== null && (
+              <p className="text-xs mt-0.5 font-semibold px-2 py-0.5 rounded-full inline-block"
+                style={{ background: paoSt.bg, color: paoSt.color }}>{paoSt.label}</p>
+            )}
           </div>
         </div>
 
