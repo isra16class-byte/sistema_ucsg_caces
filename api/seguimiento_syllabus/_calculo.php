@@ -33,6 +33,40 @@ function calcularEscala(?float $valoracion): array
     return ['Deficiente', '#EF4444'];
 }
 
+/**
+ * Docente actual guardado en `asignatura.docente` (puede ser NULL si nunca
+ * se sembró/sincronizó).
+ */
+function _obtenerDocenteActual(mysqli $conexion, int $idAsignatura): ?string
+{
+    $stmt = $conexion->prepare('SELECT docente FROM asignatura WHERE id_asignatura = ?');
+    $stmt->bind_param('i', $idAsignatura);
+    $stmt->execute();
+    $fila = $stmt->get_result()->fetch_assoc();
+    return $fila['docente'] ?? null;
+}
+
+/**
+ * Si el CSV de la encuesta trae un nombre de docente y difiere del que hay
+ * guardado en `asignatura.docente`, actualiza la columna. Se llama en cada
+ * cálculo de resultado (I2), así que la BD queda sincronizada con el último
+ * CSV subido sin necesidad de un paso manual. Devuelve el docente final
+ * (el recién sincronizado, o el que ya había si el CSV no trae uno nuevo).
+ */
+function _sincronizarDocenteAsignatura(mysqli $conexion, int $idAsignatura, ?string $docenteCsv, ?string $docenteActual): ?string
+{
+    if ($docenteCsv === null || $docenteCsv === '') {
+        return $docenteActual;
+    }
+    if ($docenteCsv === $docenteActual) {
+        return $docenteActual;
+    }
+    $stmt = $conexion->prepare('UPDATE asignatura SET docente = ? WHERE id_asignatura = ?');
+    $stmt->bind_param('si', $docenteCsv, $idAsignatura);
+    $stmt->execute();
+    return $docenteCsv;
+}
+
 /** Vigencia de evidencia de NIVEL CARRERA -- tabla Evidencias + Catalogo_Evidencias, ligada a id_evaluacion. */
 function tiposCarreraVigentes(mysqli $conexion, int $idEvaluacion): array
 {
@@ -110,6 +144,13 @@ function calcularResultadoAsignatura(mysqli $conexion, int $idAsignatura, string
     $respuestas = $efDisponible ? $datosEf['respuestas'] : 0;
     $promedioGeneral = $efDisponible ? $datosEf['promedio_general'] : 0;
 
+    // Docente: se detecta desde el CSV recién leído (columna fija #3) y se
+    // sincroniza contra `asignatura.docente`. Si el CSV no trae nombre (o no
+    // hay CSV todavía), se conserva lo que ya hubiera en la BD.
+    $docenteCsv = $efDisponible ? ($datosEf['docente'] ?? null) : null;
+    $docenteActual = _obtenerDocenteActual($conexion, $idAsignatura);
+    $docenteFinal = _sincronizarDocenteAsignatura($conexion, $idAsignatura, $docenteCsv, $docenteActual);
+
     $ef2 = $tieneEf2 ? 1.0 : null;
     $ef3Doc = $tieneEf3 ? 1.0 : null;
     $ef5 = $tieneEf5 ? 1.0 : null;
@@ -131,6 +172,7 @@ function calcularResultadoAsignatura(mysqli $conexion, int $idAsignatura, string
     return [
         'id_asignatura' => $idAsignatura,
         'nombre_asignatura' => $nombreAsignatura,
+        'docente' => $docenteFinal,
         'resultado_final' => $valoracionGeneral,
         'valoracion_general' => $valoracionGeneral,
         'estado_general' => $estadoGeneral,

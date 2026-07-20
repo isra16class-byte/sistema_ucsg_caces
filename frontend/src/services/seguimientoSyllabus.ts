@@ -45,6 +45,7 @@ export interface EvidenciaInfo {
 export interface ResultadoAsignatura {
   id_asignatura: number;
   nombre_asignatura: string;
+  docente: string | null;
   valoracion_general: number | null;
   estado_general: "completo" | "parcial" | "sin_datos";
   escala: string | null;
@@ -59,7 +60,7 @@ export interface ResultadoAsignatura {
   promedio_general: number;
 }
 
-export interface ResultadoCohorte extends Omit<ResultadoAsignatura, "id_asignatura" | "nombre_asignatura" | "evidencias_info"> {
+export interface ResultadoCohorte extends Omit<ResultadoAsignatura, "id_asignatura" | "nombre_asignatura" | "docente" | "evidencias_info"> {
   detalle_asignaturas: ResultadoAsignatura[];
 }
 

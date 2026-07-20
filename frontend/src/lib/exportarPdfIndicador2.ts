@@ -234,7 +234,7 @@ function drawMasthead(
   const yFicha = yBorde + 5;
   const colW = CONTENT_W / 4;
   const meta: [string, string, boolean][] = [
-    ["Docente", "Sin asignar", true],
+    ["Docente", asignatura.docente ?? "Sin asignar", true],
     ["Cohorte", `Cohorte ${cohortLabel}`, false],
     ["PAO", `PAO ${paoNumero}`, false],
     // Formato corto ("18 jul 2026, 08:43") en vez del largo ("18 de julio de 2026

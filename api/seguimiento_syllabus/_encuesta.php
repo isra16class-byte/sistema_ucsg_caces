@@ -172,6 +172,32 @@ function parseCsvString(string $contenido): array
     return $filas;
 }
 
+/**
+ * Detecta el nombre del docente desde la columna fija #3 del CSV
+ * (timestamp | materia | profesor | [P1]...[P23]). Si hay filas con
+ * nombres distintos (error de tipeo, fila suelta, etc.), se queda con el
+ * más frecuente. Devuelve null si el CSV no trae ningún valor utilizable.
+ */
+function _extraerDocenteCsv(array $filas): ?string
+{
+    $conteo = [];
+    foreach ($filas as $fila) {
+        if (!isset($fila[2])) {
+            continue;
+        }
+        $nombre = trim($fila[2]);
+        if ($nombre === '') {
+            continue;
+        }
+        $conteo[$nombre] = ($conteo[$nombre] ?? 0) + 1;
+    }
+    if (empty($conteo)) {
+        return null;
+    }
+    arsort($conteo);
+    return array_key_first($conteo);
+}
+
 function buscarColumnasPregunta(array $preguntas, int $numero): array
 {
     $patron = '/\[P' . $numero . '[\.\]]/i';
@@ -267,6 +293,7 @@ function calcularEfDesdeCsv(mysqli $conexion, int $idAsignatura): ?array
         'respuestas' => $totalFilas,
         'promedio_general' => !empty($promedios) ? round(array_sum($promedios) / count($promedios), 1) : 0,
         'degradado' => $csv['degradado'],
+        'docente' => _extraerDocenteCsv($filas),
     ];
 }
 
