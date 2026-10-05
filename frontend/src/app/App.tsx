@@ -1,520 +1,381 @@
-import { Toaster } from "sonner";
-import {
-  obtenerEvaluacion,
-  obtenerDatosTasa,
-} from "../services/evidencias";
+import { Toaster } from 'sonner';
+import { Loader2 } from 'lucide-react';
+import { Navigate, Route, Routes, useNavigate, useParams } from 'react-router';
 
-import { useEffect, useState } from "react";
-import EvidenceUploadView from "../pages/EvidenceUploadView";
-import DashboardView from "../pages/DashboardView";
-import IndicatorView from "../pages/IndicatorView";
-import CriteriaView from "../pages/CriteriaView";
-import CareersView from "../pages/CareersView";
-import LoginView from "../pages/LoginView";
-import type { UsuarioSesion } from "../services/auth";
+import { obtenerEvaluacion, obtenerDatosTasa, obtenerDatosDesercion } from '../shared/services/evidencias';
+import { useEffect } from 'react';
+import type { ReactNode } from 'react';
 
-import type {
-  View,
-  IndicatorDef,
-  Career,
-} from "../types";
+import EvidenceUploadView from '../features/indicadores/EvidenceUploadView';
+import DashboardView from '../features/dashboard/DashboardView';
+import IndicatorView from '../features/indicadores/IndicatorView';
+import CriteriaView from '../features/carreras/CriteriaView';
+import CareersView from '../features/carreras/CareersView';
+import LoginView from '../features/auth/LoginView';
 
-// ── Indicator factory ────────────────────────────────────────
-function makeIndicators(
-  career: Career,
-): IndicatorDef[] {
-  return [
-    {
-      id: "I1",
-      num: 1,
-      code: "I1",
-      name: "Syllabus",
-      description:
-        "Evalúa la elaboración y actualización de los sílabos de todas las asignaturas del programa, verificando su coherencia con la malla curricular y el perfil de egreso aprobados institucionalmente.",
-      formula:
-        "(Asignaturas con sílabo actualizado / Total de asignaturas) × 100",
-      period: "Período académico vigente",
-      purpose:
-        "Garantizar que todas las asignaturas cuenten con una planificación curricular formal, actualizada y coherente que oriente efectivamente el proceso de enseñanza-aprendizaje.",
-      cohorts: [],
-      slots: [
-        {
-          sourceNum: 1,
-          label: "Malla curricular",
-          sharedKey: "malla_curricular",
-        },
-        {
-          sourceNum: 2,
-          label: "Syllabus",
-          sharedKey: "silabos",
-        },
-        {
-          sourceNum: 3,
-          label: "Asignaturas",
-        },
-      ],
-    },
-    {
-      id: "I2",
-      num: 2,
-      code: "I2",
-      name: "Seguimiento de Syllabus",
-      description:
-        "Verifica el cumplimiento y seguimiento efectivo de los sílabos durante el período académico a través de registros documentados y actas de revisión periódica.",
-      formula:
-        "EF1(×0.33) + EF2(×0.27) + EF3(×0.20) + EF4(×0.13) + EF5(×0.07) = Valor asignatura × 100",
-      period: "Período académico vigente",
-      purpose:
-        "Asegurar que los docentes cumplen con la planificación del sílabo y que existen mecanismos formales de control y revisión del avance curricular en cada asignatura.",
-      cohorts: [],
-      slots: [
-        {
-          sourceNum: 1,
-          label: "Syllabus",
-          sharedKey: "silabos",
-        },
-        {
-          sourceNum: 2,
-          label: "Seguimiento de syllabus",
-        },
-        {
-          sourceNum: 3,
-          label: "Actas de revisión",
-        },
-      ],
-    },
-    {
-      id: "I3",
-      num: 3,
-      code: "I3",
-      name: "Tutorías Académicas",
-      description:
-        "Evalúa la implementación del sistema institucional de tutorías académicas para el acompañamiento, apoyo y seguimiento al proceso de aprendizaje de los estudiantes.",
-      formula:
-        "EF1(×0.40) + EF2(×0.30) + EF3(×0.20) + EF4(×0.10) = Valor materia × 100",
-      period: "Período académico vigente",
-      purpose:
-        "Medir la cobertura y efectividad del sistema de tutorías como mecanismo de apoyo al rendimiento académico y como estrategia para reducir la deserción estudiantil.",
-      cohorts: [],
-      slots: [
-        {
-          sourceNum: 1,
-          label: "Plan de tutorías",
-        },
-        {
-          sourceNum: 2,
-          label: "Registros de tutorías",
-        },
-        {
-          sourceNum: 3,
-          label: "Informe de tutorías",
-        },
-        {
-          sourceNum: 4,
-          label: "Evidencias de atención",
-        },
-      ],
-    },
-    {
-      id: "I4",
-      num: 4,
-      code: "I4",
-      name: "Tasa de Deserción",
-      description:
-        "Mide el porcentaje de estudiantes que abandonan sus estudios antes de completar el programa académico, en relación al total de estudiantes matriculados en el período.",
-      formula:
-        "(Estudiantes desertores / Estudiantes matriculados) × 100",
-      period: "Período académico vigente",
-      purpose:
-        "Identificar el nivel de abandono estudiantil para implementar estrategias de retención, apoyo y mejora de la permanencia académica en la institución.",
-      cohorts: [],
-      slots: [
-        {
-          sourceNum: 1,
-          label:
-            "Estudiantes matriculados 1er nivel",
-          sharedKey: "matriculados",
-        },
-        {
-          sourceNum: 2,
-          label:
-            "Estudiantes matriculados 2do nivel",
-        },
-        {
-          sourceNum: 3,
-          label: "Estudiantes desertados",
-        },
-      ],
-    },
-    {
-      id: "I5",
-      num: 5,
-      code: "I5",
-      name: "Tasa de Titulación",
-      description:
-        "Mide el porcentaje de estudiantes que culminan su proceso formativo y obtienen su título dentro del período de evaluación establecido por el ente rector.",
-      formula:
-        "(Número de graduados / Número de matriculados) × 100",
-      period:
-        "Duración de la carrera + 1 año adicional",
-      purpose:
-        "Permite al evaluador conocer la eficiencia terminal de cada cohorte y determinar si la institución logra que sus estudiantes concluyan sus estudios satisfactoriamente.",
-      cohorts: [],
-      slots: [
-        {
-          sourceNum: 1,
-          label: "Estudiantes matriculados",
-          sharedKey: "matriculados",
-        },
-        {
-          sourceNum: 2,
-          label: "Estudiantes graduados",
-        },
-        {
-          sourceNum: 3,
-          label: "Informe de titulación",
-        },
-        {
-          sourceNum: 4,
-          label: "Malla curricular",
-          sharedKey: "malla_curricular",
-        },
-      ],
-    },
-  ].map((indicator) => ({
-    ...indicator,
-    slots: indicator.slots.map((slot) => ({
-      ...slot,
-    })),
-  }));
+import { useAuth } from '../contexts/AuthContext';
+import { useCareerContext } from '../contexts/CareerContext';
+import CareerLayout from './CareerLayout';
+
+import type { Career } from '../types/index';
+
+// ── Rutas de nivel raíz (auth) ────────────────────────────────
+
+function RequireAuth({ children }: { children: ReactNode }) {
+  const { usuario } = useAuth();
+
+  if (!usuario) {
+    return <Navigate to="/login" replace />;
+  }
+
+  return <>{children}</>;
+}
+
+/**
+ * "Volver" real dentro de la app: si esta pestaña ya tiene una entrada
+ * anterior en el historial (llegamos acá por un `navigate(...)` push desde
+ * otra pantalla de la propia app), hace `navigate(-1)` -- un pop real, igual
+ * que si el usuario hubiera usado la flecha "atrás" del navegador. Antes
+ * cada botón "Volver" hacía `navigate(ruta, { replace: true })`: eso no saca
+ * nada del historial, solo le cambia el destino a la entrada actual, así
+ * que cada "Volver" dejaba una entrada extra apuntando a la pantalla
+ * anterior en vez de sacar la de adelante. Con uso prolongado eso
+ * desalineaba el historial real del navegador respecto al flujo de la app,
+ * y ahí es donde las flechas atrás/adelante del navegador terminaban
+ * repitiendo pantallas ya vistas.
+ *
+ * `fallback` cubre el caso de entrada directa por URL o refresh (no hay
+ * ninguna entrada anterior de esta sesión a la cual volver con -1): ahí sí
+ * se navega explícito, con `replace` para no dejar una entrada de más.
+ */
+function useVolver(fallback: string) {
+  const navigate = useNavigate();
+
+  return () => {
+    const idx = (window.history.state as { idx?: number } | null)?.idx;
+
+    if (typeof idx === 'number' && idx > 0) {
+      navigate(-1);
+      return;
+    }
+
+    navigate(fallback, { replace: true });
+  };
+}
+
+function LoginRoute() {
+  const { login } = useAuth();
+  const navigate = useNavigate();
+
+  return (
+    <LoginView
+      onLogin={(usuarioAutenticado) => {
+        login(usuarioAutenticado);
+        navigate('/carreras', { replace: true });
+      }}
+    />
+  );
+}
+
+function CareersRoute() {
+  const { usuario, logout } = useAuth();
+  const navigate = useNavigate();
+
+  if (!usuario) {
+    return <Navigate to="/login" replace />;
+  }
+
+  function selectCareer(career: Career) {
+    // Pasa el Career ya resuelto por navigate state, para que CareerLayout
+    // no tenga que volver a pedirlo a la API (ver CareerLayout.tsx).
+    navigate(`/carreras/${career.code}/criterios`, { state: { career } });
+  }
+
+  return (
+    <CareersView
+      onSelect={selectCareer}
+      onLogout={() => {
+        logout();
+        navigate('/login', { replace: true });
+      }}
+      usuario={usuario}
+    />
+  );
+}
+
+// ── Rutas anidadas bajo /carreras/:code (dependen de CareerLayout) ────
+
+function CriteriaRoute() {
+  const { career } = useCareerContext();
+  const { logout } = useAuth();
+  const navigate = useNavigate();
+  const volver = useVolver('/carreras');
+
+  return (
+    <CriteriaView
+      career={career}
+      onSelectDocencia={() => navigate(`/carreras/${career.code}/dashboard`)}
+      onBack={volver}
+      onLogout={() => {
+        logout();
+        navigate('/login', { replace: true });
+      }}
+    />
+  );
+}
+
+function DashboardRoute() {
+  const { career, indicators, setIndicators, selectedCohort, onCohortChange, setSelectedPAO } =
+    useCareerContext();
+  const { usuario, puedeCargar, logout } = useAuth();
+  const navigate = useNavigate();
+  const volver = useVolver('/carreras');
+
+  // Carga los datos reales de I4/I5 para el dashboard (matriculados/
+  // graduados/desertores de la cohorte seleccionada). Antes vivía en un
+  // useEffect de App.tsx gateado por `view === 'dashboard'`; ahora, al
+  // vivir en el propio componente de la ruta, ese gateo ya lo da el router.
+  useEffect(() => {
+    let cancelado = false;
+
+    async function cargarResultadosDashboard() {
+      try {
+        const cohorteNormalizada = selectedCohort.replace(/\s+/g, '').toUpperCase();
+
+        const evaluacion = await obtenerEvaluacion(career.code, cohorteNormalizada);
+
+        const [datosTitulacion, datosDesercion] = await Promise.all([
+          obtenerDatosTasa(evaluacion.id_evaluacion),
+          obtenerDatosDesercion(evaluacion.id_evaluacion),
+        ]);
+
+        if (cancelado) {
+          return;
+        }
+
+        const registroTitulacion = datosTitulacion.find(
+          (dato) => dato.cohorte.replace(/\s+/g, '').toUpperCase() === cohorteNormalizada,
+        );
+
+        const registroDesercion = datosDesercion.find(
+          (dato) => dato.cohorte.replace(/\s+/g, '').toUpperCase() === cohorteNormalizada,
+        );
+
+        setIndicators((actuales) =>
+          actuales.map((indicator) => {
+            if (indicator.id === 'I5') {
+              if (!registroTitulacion) {
+                return { ...indicator, cohorts: [] };
+              }
+
+              return {
+                ...indicator,
+                cohorts: [
+                  {
+                    period: selectedCohort,
+                    enrolled: Number(registroTitulacion.matriculados) || 0,
+                    graduated: Number(registroTitulacion.graduados) || 0,
+                  },
+                ],
+              };
+            }
+
+            if (indicator.id === 'I4') {
+              if (
+                !registroDesercion ||
+                registroDesercion.iniciaron_primer_nivel === null ||
+                registroDesercion.no_continuaron === null
+              ) {
+                return { ...indicator, cohorts: [] };
+              }
+
+              /*
+               * calcRate() calcula:
+               * graduated / enrolled × 100
+               *
+               * Para I4 se reutilizan esos campos así:
+               * enrolled   = iniciaron en primer nivel
+               * graduated  = no continuaron
+               */
+              return {
+                ...indicator,
+                cohorts: [
+                  {
+                    period: selectedCohort,
+                    enrolled: Number(registroDesercion.iniciaron_primer_nivel) || 0,
+                    graduated: Number(registroDesercion.no_continuaron) || 0,
+                  },
+                ],
+              };
+            }
+
+            return indicator;
+          }),
+        );
+      } catch (error) {
+        console.error('No se pudieron cargar los resultados del dashboard:', error);
+
+        if (!cancelado) {
+          setIndicators((actuales) =>
+            actuales.map((indicator) =>
+              indicator.id === 'I4' || indicator.id === 'I5'
+                ? { ...indicator, cohorts: [] }
+                : indicator,
+            ),
+          );
+        }
+      }
+    }
+
+    void cargarResultadosDashboard();
+
+    return () => {
+      cancelado = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [career, selectedCohort]);
+
+  return (
+    <DashboardView
+      indicators={indicators}
+      career={career}
+      cohort={selectedCohort}
+      onCohortChange={onCohortChange}
+      onSelect={(id, pao) => {
+        if (pao !== undefined) {
+          setSelectedPAO(pao);
+        }
+
+        navigate(`/carreras/${career.code}/indicadores/${id}`);
+      }}
+      onLogout={() => {
+        logout();
+        navigate('/login', { replace: true });
+      }}
+      onUpload={() => {
+        if (!puedeCargar) {
+          return;
+        }
+
+        navigate(`/carreras/${career.code}/evidencias`);
+      }}
+      onBackToCareers={volver}
+      usuario={usuario!}
+      puedeCargar={Boolean(puedeCargar)}
+    />
+  );
+}
+
+function IndicatorRoute() {
+  const { career, indicators, selectedCohort, selectedPAO } = useCareerContext();
+  const { puedeCargar } = useAuth();
+  const navigate = useNavigate();
+  const { codigo } = useParams<{ codigo: string }>();
+  const volver = useVolver(`/carreras/${career.code}/dashboard`);
+
+  const selected = indicators.find((indicator) => indicator.id === codigo);
+
+  if (!selected) {
+    return <Navigate to={`/carreras/${career.code}/dashboard`} replace />;
+  }
+
+  return (
+    <IndicatorView
+      indicator={selected}
+      onBack={volver}
+      career={career}
+      cohort={selectedCohort}
+      pao={selectedPAO}
+      onUpload={() => {
+        if (!puedeCargar) {
+          return;
+        }
+
+        navigate(`/carreras/${career.code}/indicadores/${selected.id}/evidencias`);
+      }}
+      puedeCargar={Boolean(puedeCargar)}
+    />
+  );
+}
+
+function EvidenceUploadRoute() {
+  const { career, indicators, setIndicators, selectedCohort } = useCareerContext();
+  const { puedeCargar } = useAuth();
+  const { codigo } = useParams<{ codigo?: string }>();
+  const volver = useVolver(
+    codigo
+      ? `/carreras/${career.code}/indicadores/${codigo}`
+      : `/carreras/${career.code}/dashboard`,
+  );
+
+  if (!puedeCargar) {
+    return <Navigate to={`/carreras/${career.code}/dashboard`} replace />;
+  }
+
+  return (
+    <EvidenceUploadView
+      career={career}
+      indicators={indicators}
+      onChange={setIndicators}
+      onBack={volver}
+      preselectedCohort={selectedCohort}
+      preselectedIndicatorId={codigo}
+    />
+  );
 }
 
 // ── App ──────────────────────────────────────────────────────
+
 export default function App() {
-  const [usuario, setUsuario] =
-    useState<UsuarioSesion | null>(null);
+  const { usuario, cargando } = useAuth();
 
-  const [view, setView] =
-    useState<View>("login");
-
-  const [career, setCareer] =
-    useState<Career | null>(null);
-
-  const [indicators, setIndicators] =
-    useState<IndicatorDef[]>([]);
-
-  const [selectedId, setSelectedId] =
-    useState<string | null>(null);
-
-  const [
-    selectedCohort,
-    setSelectedCohort,
-  ] = useState<string>("B 2025");
-
-  const [selectedPAO, setSelectedPAO] =
-    useState<number>(1);
-
-  const selected = indicators.find(
-    (indicator) =>
-      indicator.id === selectedId,
-  );
-
-  const puedeCargar =
-    usuario?.rol === "administrador" ||
-    usuario?.rol === "coordinador";
-
-  useEffect(() => {
-  if (
-    view !== "dashboard" ||
-    !career
-  ) {
-    return;
-  }
-
-  const carreraActual = career;
-
-  let cancelado = false;
-
-  async function cargarResultadoTitulacion() {
-    try {
-      const cohorteNormalizada =
-        selectedCohort
-          .replace(/\s+/g, "")
-          .toUpperCase();
-
-      const evaluacion =
-        await obtenerEvaluacion(
-          carreraActual.code,
-          cohorteNormalizada,
-        );
-
-      const datos =
-        await obtenerDatosTasa(
-          evaluacion.id_evaluacion,
-        );
-
-      if (cancelado) {
-        return;
-      }
-
-      const registroActual = datos.find(
-        (dato) =>
-          dato.cohorte
-            .replace(/\s+/g, "")
-            .toUpperCase() ===
-          cohorteNormalizada,
-      );
-
-      setIndicators((actuales) =>
-        actuales.map((indicator) => {
-          if (indicator.id !== "I5") {
-            return indicator;
-          }
-
-          if (!registroActual) {
-            return {
-              ...indicator,
-              cohorts: [],
-            };
-          }
-
-          return {
-            ...indicator,
-            cohorts: [
-              {
-                period: selectedCohort,
-                enrolled:
-                  Number(
-                    registroActual.matriculados,
-                  ) || 0,
-                graduated:
-                  Number(
-                    registroActual.graduados,
-                  ) || 0,
-              },
-            ],
-          };
-        }),
-      );
-    } catch (error) {
-      console.error(
-        "No se pudo cargar el resultado del indicador I5:",
-        error,
-      );
-
-      if (!cancelado) {
-        setIndicators((actuales) =>
-          actuales.map((indicator) =>
-            indicator.id === "I5"
-              ? {
-                  ...indicator,
-                  cohorts: [],
-                }
-              : indicator,
-          ),
-        );
-      }
-    }
-  }
-
-  void cargarResultadoTitulacion();
-
-  return () => {
-    cancelado = true;
-  };
-}, [
-  view,
-  career,
-  selectedCohort,
-]);
-
-  function selectCareer(
-    selectedCareer: Career,
-  ) {
-    setCareer(selectedCareer);
-
-    setIndicators(
-      makeIndicators(selectedCareer),
+  // Mientras se resuelve si la cookie de sesión existente corresponde a un
+  // usuario logueado (ver AuthContext), no se sabe todavía si mandar a
+  // /carreras o a /login. Esperar acá, en vez de asumir "no hay usuario",
+  // es lo que evita que un refresh de página expulse al login de entrada.
+  if (cargando) {
+    return (
+      <div className="min-h-screen flex items-center justify-center gap-2 text-gray-500">
+        <Loader2 size={20} className="animate-spin" />
+        Cargando sesión…
+      </div>
     );
-
-    setSelectedId(null);
-    setSelectedCohort("B 2025");
-    setSelectedPAO(1);
-    setView("criteria");
-  }
-
-  function handleSelectIndicator(
-    id: string,
-    pao?: number,
-  ) {
-    setSelectedId(id);
-
-    if (pao !== undefined) {
-      setSelectedPAO(pao);
-    }
-
-    setView("indicator");
-  }
-
-  function handleUpload() {
-    if (!puedeCargar) {
-      return;
-    }
-
-    setSelectedId(null);
-    setView("evidUpload");
-  }
-
-  function handleIndicatorUpload() {
-    if (!puedeCargar) {
-      return;
-    }
-
-    setView("evidUpload");
-  }
-
-  function handleCohortChange(
-    newCohort: string,
-  ) {
-    if (newCohort === selectedCohort) {
-      return;
-    }
-
-    setSelectedCohort(newCohort);
-    setSelectedId(null);
-    setSelectedPAO(1);
-
-    /*
-     * Limpia de la interfaz los archivos, resultados
-     * y relaciones correspondientes a la cohorte anterior.
-     *
-     * Al entrar nuevamente en la carga de evidencias,
-     * el sistema consultará MySQL usando la nueva cohorte.
-     */
-    if (career) {
-      setIndicators(
-        makeIndicators(career),
-      );
-    }
-
-    setView("dashboard");
-  }
-
-  function handleBackToCareers() {
-    setCareer(null);
-    setIndicators([]);
-    setSelectedId(null);
-    setSelectedCohort("B 2025");
-    setSelectedPAO(1);
-    setView("careers");
-  }
-
-  function handleLogout() {
-    setUsuario(null);
-    setCareer(null);
-    setIndicators([]);
-    setSelectedId(null);
-    setSelectedCohort("B 2025");
-    setSelectedPAO(1);
-    setView("login");
   }
 
   return (
     <>
-      <Toaster
-        richColors
-        position="bottom-right"
-      />
+      <Toaster richColors position="bottom-right" />
 
-      {view === "login" && (
-        <LoginView
-          onLogin={(usuarioAutenticado) => {
-            setUsuario(usuarioAutenticado);
-            setView("careers");
-          }}
-        />
-      )}
+      <Routes>
+        <Route path="/login" element={<LoginRoute />} />
 
-      {view === "careers" && usuario && (
-        <CareersView
-          onSelect={selectCareer}
-          onLogout={handleLogout}
-          usuario={usuario}
-        />
-      )}
-
-      {view === "criteria" && career && (
-        <CriteriaView
-          career={career}
-          onSelectDocencia={() =>
-            setView("dashboard")
-          }
-          onBack={() =>
-            setView("careers")
-          }
-          onLogout={handleLogout}
-        />
-      )}
-
-      {view === "dashboard" && career && (
-        <DashboardView
-          indicators={indicators}
-          career={career}
-          cohort={selectedCohort}
-          onCohortChange={
-            handleCohortChange
-          }
-          onSelect={
-            handleSelectIndicator
-          }
-          onLogout={handleLogout}
-          onUpload={handleUpload}
-          onBackToCareers={
-            handleBackToCareers
-          }
-          usuario={usuario!}
-          puedeCargar={Boolean(puedeCargar)}
-        />
-      )}
-
-      {view === "evidUpload" && career && puedeCargar && (
-        <EvidenceUploadView
-          career={career}
-          indicators={indicators}
-          onChange={setIndicators}
-          onBack={() =>
-            setView(
-              selectedId
-                ? "indicator"
-                : "dashboard",
-            )
-          }
-          preselectedCohort={
-            selectedCohort
-          }
-          preselectedIndicatorId={
-            selectedId ?? undefined
+        <Route
+          path="/carreras"
+          element={
+            <RequireAuth>
+              <CareersRoute />
+            </RequireAuth>
           }
         />
-      )}
 
-      {view === "indicator" &&
-        selected &&
-        career && (
-          <IndicatorView
-            indicator={selected}
-            onBack={() =>
-              setView("dashboard")
-            }
-            career={career}
-            cohort={selectedCohort}
-            pao={selectedPAO}
-            onUpload={
-              handleIndicatorUpload
-            }
-            puedeCargar={Boolean(puedeCargar)}
-          />
-        )}
+        <Route
+          path="/carreras/:code"
+          element={
+            <RequireAuth>
+              <CareerLayout />
+            </RequireAuth>
+          }
+        >
+          <Route path="criterios" element={<CriteriaRoute />} />
+          <Route path="dashboard" element={<DashboardRoute />} />
+          <Route path="evidencias" element={<EvidenceUploadRoute />} />
+          <Route path="indicadores/:codigo" element={<IndicatorRoute />} />
+          <Route path="indicadores/:codigo/evidencias" element={<EvidenceUploadRoute />} />
+        </Route>
+
+        <Route path="/" element={<Navigate to={usuario ? '/carreras' : '/login'} replace />} />
+        <Route path="*" element={<Navigate to={usuario ? '/carreras' : '/login'} replace />} />
+      </Routes>
     </>
   );
 }
