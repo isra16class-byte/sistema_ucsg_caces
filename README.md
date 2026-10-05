@@ -191,7 +191,7 @@ Clonarlo **dentro de `htdocs`**, con el nombre `sistemacaces` en minúscula (las
 frontend y el `basePath` de Slim ya asumen ese nombre):
 
 ```bash
-git clone https://github.com/kjveliz/Sistema_caces_final.git C:/xampp/htdocs/sistemacaces
+git clone https://github.com/isra16class-byte/sistema_ucsg_caces.git C:/xampp/htdocs/sistemacaces
 cd C:/xampp/htdocs/sistemacaces
 ```
 
