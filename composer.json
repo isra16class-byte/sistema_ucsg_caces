@@ -1,6 +1,25 @@
 {
+    "scripts": {
+        "test": "phpunit",
+        "test:integration": "phpunit --testsuite=integration",
+        "generate-openapi": "php bin/generate-openapi.php"
+    },
     "require": {
         "smalot/pdfparser": "^2.12",
-        "google/apiclient": "^2.19"
+        "google/apiclient": "^2.19",
+        "vlucas/phpdotenv": "^5.6",
+        "slim/slim": "^4.14",
+        "slim/psr7": "^1.7",
+        "guzzlehttp/guzzle": "7.15.1"
+    },
+    "require-dev": {
+        "robmorgan/phinx": "^0.16.12",
+        "phpunit/phpunit": "^11.5",
+        "zircote/swagger-php": "^6.4"
+    },
+    "autoload": {
+        "psr-4": {
+            "App\\": "src/"
+        }
     }
 }
